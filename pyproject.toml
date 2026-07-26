@@ -1,0 +1,142 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hnsbi-toolkit"
+version = "0.1.0"
+description = "Hybrid neural density and posterior estimation for simulation-based inference"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "hnsbi-toolkit contributors" },
+]
+keywords = [
+  "simulation-based inference",
+  "normalizing flows",
+  "density ratio estimation",
+  "high-energy physics",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+  "jsonschema>=4.18",
+  "numpy>=1.23",
+]
+
+[project.optional-dependencies]
+data = [
+  "awkward>=2.4",
+  "pandas>=1.5",
+  "pyarrow>=10",
+]
+flows = [
+  "nflows>=0.14",
+  "onnx>=1.15",
+  "onnxruntime>=1.16",
+  "onnxscript>=0.1",
+  "torch>=2.1",
+]
+lhc = [
+  "awkward>=2.4",
+  "iminuit>=2.24",
+  "jax>=0.4",
+  "joblib>=1.2",
+  "matplotlib>=3.7",
+  "mplhep>=0.3",
+  "onnx>=1.15",
+  "onnxruntime>=1.16",
+  "onnxscript>=0.1",
+  "pandas>=1.5",
+  "pyarrow>=10",
+  "PyYAML>=6",
+  "pytorch-lightning>=2.0",
+  "scikit-learn>=1.2",
+  "scipy>=1.10",
+  "skl2onnx>=1.16",
+  "torch>=2.1",
+  "uproot>=5",
+]
+bayes = [
+  "nflows>=0.14",
+  "onnx>=1.15",
+  "onnxruntime>=1.16",
+  "onnxscript>=0.1",
+  "pandas>=1.5",
+  "pyarrow>=10",
+  "scikit-learn>=1.2",
+  "scipy>=1.10",
+  "torch>=2.1",
+]
+plots = [
+  "matplotlib>=3.7",
+  "scipy>=1.10",
+]
+docs = [
+  "furo>=2024.1",
+  "myst-parser>=2",
+  "sphinx>=7",
+  "sphinx-copybutton>=0.5",
+]
+test = [
+  "jsonschema>=4.18",
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "scipy>=1.10",
+]
+
+[project.urls]
+Documentation = "https://hnsbi-toolkit.readthedocs.io"
+Issues = "https://github.com/rafaellopesdesa/hnsbi-toolkit/issues"
+Source = "https://github.com/rafaellopesdesa/hnsbi-toolkit"
+
+[project.scripts]
+hnsbi = "hnsbi.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hnsbi"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"schemas/toolkit.schema.json" = "hnsbi/schemas/toolkit.schema.json"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/schemas",
+  "/tests",
+  "/docs",
+  "/examples",
+  "/README.md",
+  "/LICENSE",
+  "/NOTICE",
+  "/CITATION.cff",
+  "/requirements",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["hnsbi"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

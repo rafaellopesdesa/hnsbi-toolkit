@@ -1,0 +1,562 @@
+"""JSON/dictionary configuration loading and validation."""
+
+from __future__ import annotations
+
+import json
+import math
+import numbers
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass
+from importlib import resources
+from pathlib import Path
+from typing import Any
+
+
+class ConfigError(ValueError):
+    """Configuration does not satisfy the toolkit contract."""
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"Non-standard JSON numeric constant {value!r}.")
+
+
+def _reject_duplicate_keys(
+    pairs: list[tuple[str, Any]],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON object key {key!r}.")
+        result[key] = value
+    return result
+
+
+def _require_finite_numbers(value: Any, path: str = "$") -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            _require_finite_numbers(item, f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _require_finite_numbers(item, f"{path}[{index}]")
+    elif (
+        isinstance(value, numbers.Real)
+        and not isinstance(value, bool)
+        and not math.isfinite(float(value))
+    ):
+        raise ConfigError(f"{path} must be finite.")
+
+
+def _load_schema() -> dict[str, Any]:
+    """Load the packaged schema, with a source-tree fallback for development."""
+
+    try:
+        text = (
+            resources.files("hnsbi")
+            .joinpath("schemas", "toolkit.schema.json")
+            .read_text(encoding="utf-8")
+        )
+    except FileNotFoundError:
+        source_path = (
+            Path(__file__).resolve().parents[2] / "schemas" / "toolkit.schema.json"
+        )
+        if not source_path.is_file():
+            raise ConfigError(
+                "The packaged toolkit JSON Schema is missing; reinstall hnsbi-toolkit."
+            ) from None
+        text = source_path.read_text(encoding="utf-8")
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ConfigError("The packaged toolkit JSON Schema is invalid.") from exc
+    if not isinstance(value, dict):
+        raise ConfigError("The packaged toolkit JSON Schema is not an object.")
+    return value
+
+
+def _read_mapping(source: str | Path | Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(source, Mapping):
+        return deepcopy(dict(source))
+    path = Path(source)
+    try:
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except OSError as exc:
+        raise ConfigError(f"Could not read configuration {path}.") from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ConfigError(f"Configuration {path} is not valid JSON.") from exc
+    if not isinstance(value, dict):
+        raise ConfigError("The top-level configuration must be an object.")
+    return value
+
+
+def _manual_validate(value: Mapping[str, Any]) -> None:
+    version = value.get("schema_version")
+    if version != "1.0":
+        raise ConfigError(f"schema_version must be '1.0', received {version!r}.")
+    features = value.get("features")
+    if not isinstance(features, list) or not features:
+        raise ConfigError("features must be a non-empty list.")
+    if not all(isinstance(name, str) and name for name in features):
+        raise ConfigError("Every feature name must be a non-empty string.")
+    if len(set(features)) != len(features):
+        raise ConfigError("Feature names must be unique.")
+    if "frequentist" not in value and "bayesian" not in value:
+        raise ConfigError("At least one of 'frequentist' or 'bayesian' is required.")
+
+    def validate_source_columns(
+        specification: Any,
+        *,
+        model_features: set[str],
+        location: str,
+    ) -> None:
+        if not isinstance(specification, Mapping):
+            raise ConfigError(f"{location} must be an object.")
+        roles = {
+            field: specification[field]
+            for field in (
+                "weight_column",
+                "event_id_column",
+                "split_column",
+                "log_density_column",
+            )
+            if field in specification
+        }
+        if not all(isinstance(column, str) and column for column in roles.values()):
+            raise ConfigError(f"{location} column names must be non-empty strings.")
+        role_columns = list(roles.values())
+        if len(set(role_columns)) != len(role_columns):
+            raise ConfigError(f"{location} assigns one column to multiple data roles.")
+        overlap = model_features.intersection(role_columns)
+        if overlap:
+            raise ConfigError(
+                f"{location} data-role columns overlap model features "
+                f"{sorted(overlap)}."
+            )
+
+    frequentist = value.get("frequentist")
+    if frequentist is not None:
+        if not isinstance(frequentist, Mapping):
+            raise ConfigError("frequentist must be an object.")
+        samples = frequentist.get("samples")
+        if not isinstance(samples, list) or not samples:
+            raise ConfigError("frequentist.samples must be a non-empty list.")
+        names = []
+        for sample in samples:
+            if not isinstance(sample, Mapping):
+                raise ConfigError("Every frequentist sample must be an object.")
+            name = sample.get("name")
+            if not isinstance(name, str) or not name:
+                raise ConfigError("Every frequentist sample needs a name.")
+            names.append(name)
+        if len(names) != len(samples):
+            raise ConfigError("Every frequentist sample needs a name.")
+        if len(set(names)) != len(names):
+            raise ConfigError("Frequentist sample names must be unique.")
+        observation_features = set(features)
+        validate_source_columns(
+            frequentist.get("reference"),
+            model_features=observation_features,
+            location="frequentist.reference",
+        )
+        for index, sample in enumerate(samples):
+            validate_source_columns(
+                sample.get("source"),
+                model_features=observation_features,
+                location=f"frequentist.samples[{index}].source",
+            )
+        parameters = frequentist.get("parameters")
+        if not isinstance(parameters, list) or not parameters:
+            raise ConfigError("frequentist.parameters must be a non-empty list.")
+        parameter_names = []
+        for parameter in parameters:
+            if not isinstance(parameter, Mapping):
+                raise ConfigError("Every frequentist parameter must be an object.")
+            name = parameter.get("name")
+            if not isinstance(name, str) or not name:
+                raise ConfigError("Every frequentist parameter needs a name.")
+            parameter_names.append(name)
+        if len(set(parameter_names)) != len(parameter_names):
+            raise ConfigError("Frequentist parameter names must be unique.")
+        pois = [
+            parameter["name"]
+            for parameter in parameters
+            if parameter.get("role") == "poi"
+        ]
+        if len(pois) != 1:
+            raise ConfigError("Exactly one frequentist parameter must have role='poi'.")
+        ratios = frequentist.get("ratios")
+        if not isinstance(ratios, Mapping):
+            raise ConfigError("frequentist.ratios must be an object.")
+        if ratios.get("backend") != "nsbi_common_utils":
+            raise ConfigError(
+                "The frequentist ratio backend must be "
+                "'nsbi_common_utils'; native is reserved for Bayesian "
+                "residual training."
+            )
+        if (
+            ratios.get("normalization", "independent_reference_mean")
+            != "independent_reference_mean"
+        ):
+            raise ConfigError(
+                "Frequentist ratios require normalization='independent_reference_mean'."
+            )
+        declared = set(parameter_names)
+        parameter_roles = {
+            parameter["name"]: parameter.get("role") for parameter in parameters
+        }
+
+        def validate_point(point: Any, location: str) -> None:
+            if not isinstance(point, Mapping):
+                raise ConfigError(f"{location} must be an object.")
+            if not all(isinstance(name, str) for name in point):
+                raise ConfigError(f"{location} parameter names must be strings.")
+            names_at_point = set(point)
+            if names_at_point != declared:
+                raise ConfigError(
+                    f"{location} must contain exactly {sorted(declared)}; "
+                    f"found {sorted(names_at_point)}."
+                )
+            for name, item in point.items():
+                if not isinstance(item, numbers.Real) or isinstance(item, bool):
+                    raise ConfigError(f"{location}.{name} must be a number.")
+
+        asimov = frequentist.get("asimov")
+        if isinstance(asimov, Mapping):
+            validate_point(
+                asimov.get("parameter_point"),
+                "frequentist.asimov.parameter_point",
+            )
+            if "normalization_source" in asimov:
+                validate_source_columns(
+                    asimov["normalization_source"],
+                    model_features=observation_features,
+                    location="frequentist.asimov.normalization_source",
+                )
+        toys = frequentist.get("toys")
+        if isinstance(toys, Mapping):
+            points = toys.get("parameter_points")
+            if not isinstance(points, list) or not points:
+                raise ConfigError(
+                    "frequentist.toys.parameter_points must be a non-empty list."
+                )
+            for index, point in enumerate(points):
+                validate_point(
+                    point,
+                    f"frequentist.toys.parameter_points[{index}]",
+                )
+        nis = frequentist.get("nis")
+        if isinstance(nis, Mapping):
+            points = nis.get("design_points")
+            if not isinstance(points, list) or not points:
+                raise ConfigError(
+                    "frequentist.nis.design_points must be a non-empty list."
+                )
+            for index, point in enumerate(points):
+                validate_point(
+                    point,
+                    f"frequentist.nis.design_points[{index}]",
+                )
+        systematics = frequentist.get("systematics", ())
+        if not isinstance(systematics, (list, tuple)):
+            raise ConfigError("frequentist.systematics must be a list.")
+        systematic_names: set[str] = set()
+        modifier_pairs: set[tuple[str, str]] = set()
+        for systematic in systematics:
+            if not isinstance(systematic, Mapping):
+                raise ConfigError("Every frequentist systematic must be an object.")
+            systematic_name = systematic.get("name")
+            if not isinstance(systematic_name, str) or not systematic_name:
+                raise ConfigError("Every systematic needs a name.")
+            if systematic_name in systematic_names:
+                raise ConfigError("Frequentist systematic names must be unique.")
+            systematic_names.add(systematic_name)
+            systematic_parameter = systematic.get("parameter")
+            if not isinstance(systematic_parameter, str):
+                raise ConfigError(
+                    f"Systematic {systematic_name!r} needs a parameter name."
+                )
+            if systematic_parameter not in declared:
+                raise ConfigError(
+                    f"Systematic {systematic.get('name')!r} references an "
+                    "undeclared parameter."
+                )
+            if parameter_roles[systematic_parameter] != "nuisance":
+                raise ConfigError(
+                    f"Systematic {systematic.get('name')!r} must reference "
+                    "a nuisance parameter."
+                )
+            interpolation = systematic.get("interpolation", "nsbi_code4p")
+            if interpolation not in {"linear", "nsbi_code4p"}:
+                raise ConfigError(
+                    f"Systematic {systematic_name!r} interpolation must be "
+                    "'linear' or 'nsbi_code4p'."
+                )
+            variations = systematic.get("variations")
+            if not isinstance(variations, list) or not variations:
+                raise ConfigError(
+                    f"Systematic {systematic.get('name')!r} needs at least "
+                    "one variation."
+                )
+            variation_samples: set[str] = set()
+            for variation in variations:
+                if not isinstance(variation, Mapping):
+                    raise ConfigError("Every systematic variation must be an object.")
+                sample_name = variation.get("sample")
+                if not isinstance(sample_name, str) or not sample_name:
+                    raise ConfigError("Every systematic variation needs a sample name.")
+                if sample_name in variation_samples:
+                    raise ConfigError(
+                        f"Systematic {systematic_name!r} repeats variation "
+                        f"sample {sample_name!r}."
+                    )
+                for anchor_name in ("yield_up", "yield_down"):
+                    if anchor_name not in variation:
+                        continue
+                    anchor = variation[anchor_name]
+                    if (
+                        isinstance(anchor, bool)
+                        or not isinstance(anchor, numbers.Real)
+                        or float(anchor) < 0
+                    ):
+                        raise ConfigError(
+                            f"Systematic {systematic_name!r} variation "
+                            f"{sample_name!r} {anchor_name} must be a finite "
+                            "non-negative number."
+                        )
+                    if interpolation == "nsbi_code4p" and float(anchor) <= 0:
+                        raise ConfigError(
+                            f"Systematic {systematic_name!r} uses nsbi_code4p, "
+                            f"so variation {sample_name!r} {anchor_name} must "
+                            "be strictly positive."
+                        )
+                variation_samples.add(sample_name)
+                pair = (sample_name, systematic_parameter)
+                if pair in modifier_pairs:
+                    raise ConfigError(
+                        "A sample/parameter systematic modifier may only be "
+                        f"declared once; repeated {pair!r}."
+                    )
+                modifier_pairs.add(pair)
+                for direction in ("up", "down"):
+                    validate_source_columns(
+                        variation.get(direction),
+                        model_features=observation_features,
+                        location=(
+                            f"frequentist.systematics[{systematic_name!r}]"
+                            f".{sample_name}.{direction}"
+                        ),
+                    )
+            unknown_samples = variation_samples.difference(names)
+            if unknown_samples:
+                raise ConfigError(
+                    f"Systematic {systematic.get('name')!r} references "
+                    f"unknown samples {sorted(unknown_samples)}."
+                )
+        try:
+            from .intensity import IntensityModel
+
+            IntensityModel.from_config(frequentist)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ConfigError(f"Invalid frequentist intensity model: {exc}") from exc
+    bayesian = value.get("bayesian")
+    if bayesian is not None:
+        if not isinstance(bayesian, Mapping):
+            raise ConfigError("bayesian must be an object.")
+        theta = bayesian.get("theta_features")
+        if not isinstance(theta, list) or not theta:
+            raise ConfigError("bayesian.theta_features must be a non-empty list.")
+        if not all(isinstance(name, str) and name for name in theta):
+            raise ConfigError(
+                "Every Bayesian theta feature must be a non-empty string."
+            )
+        if len(set(theta)) != len(theta):
+            raise ConfigError("Bayesian theta features must be unique.")
+        overlap = set(theta).intersection(features)
+        if overlap:
+            raise ConfigError(
+                "Bayesian theta and observation features must be disjoint; "
+                f"found {sorted(overlap)}."
+            )
+        datasets = bayesian.get("datasets")
+        if not isinstance(datasets, Mapping):
+            raise ConfigError("bayesian.datasets must be an object.")
+        missing = {"rho", "nu", "kappa"}.difference(datasets)
+        if missing:
+            raise ConfigError(
+                f"Bayesian dual training requires proposal datasets {sorted(missing)}."
+            )
+        model_features = set(theta).union(features)
+        for name, specification in datasets.items():
+            validate_source_columns(
+                specification,
+                model_features=model_features,
+                location=f"bayesian.datasets.{name}",
+            )
+        designs = bayesian.get("design_distributions")
+        if not isinstance(designs, Mapping):
+            raise ConfigError("bayesian.design_distributions must be an object.")
+        missing_designs = {"rho", "nu", "kappa"}.difference(designs)
+        if missing_designs:
+            raise ConfigError(
+                "Bayesian dual training requires design distributions "
+                f"{sorted(missing_designs)}."
+            )
+        dimension = len(theta)
+
+        def numeric_vector(
+            item: Any,
+            *,
+            location: str,
+            positive: bool = False,
+        ) -> tuple[float, ...]:
+            if (
+                not isinstance(item, list)
+                or len(item) != dimension
+                or any(
+                    not isinstance(entry, numbers.Real) or isinstance(entry, bool)
+                    for entry in item
+                )
+            ):
+                qualifier = "positive numeric" if positive else "numeric"
+                raise ConfigError(
+                    f"{location} must contain {dimension} {qualifier} values."
+                )
+            result = tuple(float(entry) for entry in item)
+            if positive and any(entry <= 0 for entry in result):
+                raise ConfigError(f"{location} values must be positive.")
+            return result
+
+        for name in ("rho", "nu", "kappa"):
+            design = designs[name]
+            if not isinstance(design, Mapping):
+                raise ConfigError(
+                    f"bayesian.design_distributions.{name} must be an object."
+                )
+            kind = design.get("kind")
+            if kind == "independent_normal":
+                numeric_vector(
+                    design.get("mean"),
+                    location=f"Bayesian design {name!r} mean",
+                )
+                numeric_vector(
+                    design.get("scale"),
+                    location=f"Bayesian design {name!r} scale",
+                    positive=True,
+                )
+            elif kind == "box_uniform":
+                low = numeric_vector(
+                    design.get("low"),
+                    location=f"Bayesian design {name!r} low",
+                )
+                high = numeric_vector(
+                    design.get("high"),
+                    location=f"Bayesian design {name!r} high",
+                )
+                if any(lower >= upper for lower, upper in zip(low, high, strict=True)):
+                    raise ConfigError(
+                        f"Bayesian design {name!r} requires low < high in "
+                        "every dimension."
+                    )
+            elif kind == "registry":
+                if (
+                    not isinstance(design.get("registry_key"), str)
+                    or not design["registry_key"]
+                ):
+                    raise ConfigError(
+                        f"Bayesian registry design {name!r} needs registry_key."
+                    )
+            else:
+                raise ConfigError(
+                    f"Bayesian design {name!r} has unsupported kind {kind!r}."
+                )
+        for field in ("posterior_flow", "likelihood_flow"):
+            flow = bayesian.get(field)
+            if not isinstance(flow, Mapping):
+                raise ConfigError(f"bayesian.{field} must be an object.")
+            if flow.get("architecture") != "quadratic_spline":
+                raise ConfigError(
+                    f"bayesian.{field}.architecture must be "
+                    "'quadratic_spline' for conditional density training."
+                )
+
+
+def load_config(
+    source: str | Path | Mapping[str, Any],
+    *,
+    validate_schema: bool = True,
+) -> dict[str, Any]:
+    """Load a JSON file or copy a Python dictionary.
+
+    If ``jsonschema`` is installed, the distributed schema is applied in
+    addition to the dependency-free structural checks.
+    """
+
+    value = _read_mapping(source)
+    _require_finite_numbers(value)
+    _manual_validate(value)
+    if validate_schema:
+        try:
+            import jsonschema
+        except ImportError:
+            jsonschema = None
+        if jsonschema is None:
+            raise ConfigError(
+                "JSON Schema validation requires jsonschema; reinstall "
+                "hnsbi-toolkit with its required dependencies or pass "
+                "validate_schema=False explicitly."
+            )
+        schema = _load_schema()
+        try:
+            jsonschema.validate(value, schema)
+        except jsonschema.ValidationError as exc:
+            location = ".".join(map(str, exc.absolute_path))
+            prefix = f"{location}: " if location else ""
+            raise ConfigError(prefix + exc.message) from exc
+    return value
+
+
+@dataclass(frozen=True)
+class ToolkitConfig:
+    """Validated configuration with convenient section access."""
+
+    raw: dict[str, Any]
+
+    @classmethod
+    def load(
+        cls,
+        source: str | Path | Mapping[str, Any],
+        *,
+        validate_schema: bool = True,
+    ) -> ToolkitConfig:
+        return cls(load_config(source, validate_schema=validate_schema))
+
+    @property
+    def features(self) -> tuple[str, ...]:
+        return tuple(self.raw["features"])
+
+    @property
+    def output_dir(self) -> Path:
+        return Path(self.raw.get("output_dir", "artifacts"))
+
+    @property
+    def frequentist(self) -> dict[str, Any] | None:
+        value = self.raw.get("frequentist")
+        return None if value is None else deepcopy(dict(value))
+
+    @property
+    def bayesian(self) -> dict[str, Any] | None:
+        value = self.raw.get("bayesian")
+        return None if value is None else deepcopy(dict(value))
+
+    def dump(self, path: str | Path) -> Path:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(self.raw, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return path

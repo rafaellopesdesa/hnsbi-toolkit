@@ -1,0 +1,177 @@
+{
+  "schema_version": "1.0",
+  "features": [
+    "x1",
+    "x2",
+    "x3"
+  ],
+  "output_dir": "artifacts/dual",
+  "bayesian": {
+    "theta_features": [
+      "mu",
+      "alpha"
+    ],
+    "datasets": {
+      "rho": {
+        "kind": "parquet",
+        "path": "data/rho_posterior_flow.parquet",
+        "event_id_column": "simulation_id",
+        "split_column": "split",
+        "batch_size": 65536
+      },
+      "rho_residual": {
+        "kind": "parquet",
+        "path": "data/rho_posterior_residual.parquet",
+        "event_id_column": "simulation_id",
+        "split_column": "split",
+        "batch_size": 65536
+      },
+      "nu": {
+        "kind": "parquet",
+        "path": "data/nu_likelihood_flow.parquet",
+        "event_id_column": "simulation_id",
+        "split_column": "split",
+        "batch_size": 65536
+      },
+      "kappa": {
+        "kind": "parquet",
+        "path": "data/kappa_likelihood_residual.parquet",
+        "event_id_column": "simulation_id",
+        "split_column": "split",
+        "batch_size": 65536
+      },
+      "validation": {
+        "kind": "parquet",
+        "path": "data/independent_validation.parquet",
+        "event_id_column": "simulation_id",
+        "batch_size": 65536
+      }
+    },
+    "design_distributions": {
+      "rho": {
+        "kind": "independent_normal",
+        "mean": [
+          0.0,
+          0.0
+        ],
+        "scale": [
+          2.0,
+          1.0
+        ]
+      },
+      "nu": {
+        "kind": "box_uniform",
+        "low": [
+          -3.5,
+          -2.5
+        ],
+        "high": [
+          3.5,
+          2.5
+        ]
+      },
+      "kappa": {
+        "kind": "box_uniform",
+        "low": [
+          -3.5,
+          -2.5
+        ],
+        "high": [
+          3.5,
+          2.5
+        ]
+      }
+    },
+    "posterior_flow": {
+      "architecture": "quadratic_spline",
+      "n_coupling_layers": 10,
+      "hidden_features": 256,
+      "hidden_layers": 3,
+      "spline_num_bins": 8,
+      "spline_tail_bound": 3.0,
+      "dropout_probability": 0.0,
+      "training": {
+        "epochs": 150,
+        "batch_size": 2048,
+        "learning_rate": 0.0003,
+        "validation_fraction": 0.2,
+        "early_stopping_patience": 15,
+        "seed": 20260730,
+        "device": "auto"
+      },
+      "onnx_opset": 17
+    },
+    "posterior_ratio": {
+      "backend": "native",
+      "ensemble_size": 4,
+      "training": {
+        "epochs": 120,
+        "batch_size": 4096,
+        "learning_rate": 0.0003,
+        "hidden_layers": 3,
+        "neurons": 256,
+        "activation": "swish",
+        "validation_fraction": 0.2,
+        "holdout_fraction": 0.2,
+        "early_stopping_patience": 15,
+        "seed": 20260731
+      },
+      "onnx_opset": 17
+    },
+    "likelihood_flow": {
+      "architecture": "quadratic_spline",
+      "n_coupling_layers": 10,
+      "hidden_features": 256,
+      "hidden_layers": 3,
+      "spline_num_bins": 8,
+      "spline_tail_bound": 3.0,
+      "dropout_probability": 0.0,
+      "training": {
+        "epochs": 150,
+        "batch_size": 2048,
+        "learning_rate": 0.0003,
+        "validation_fraction": 0.2,
+        "early_stopping_patience": 15,
+        "seed": 20260801,
+        "device": "auto"
+      },
+      "onnx_opset": 17
+    },
+    "likelihood_ratio": {
+      "backend": "native",
+      "ensemble_size": 4,
+      "training": {
+        "epochs": 120,
+        "batch_size": 4096,
+        "learning_rate": 0.0003,
+        "hidden_layers": 3,
+        "neurons": 256,
+        "activation": "swish",
+        "validation_fraction": 0.2,
+        "holdout_fraction": 0.2,
+        "early_stopping_patience": 15,
+        "seed": 20260802
+      },
+      "normalization": "conditional_reference_mean",
+      "onnx_opset": 17
+    },
+    "normalizer": {
+      "reference_draws_per_context": 64,
+      "contexts": 4096,
+      "hidden_features": 64,
+      "hidden_layers": 2,
+      "training": {
+        "epochs": 200,
+        "batch_size": 256,
+        "learning_rate": 0.001,
+        "validation_fraction": 0.2,
+        "early_stopping_patience": 20,
+        "seed": 20260803,
+        "device": "auto"
+      },
+      "onnx_opset": 17
+    },
+    "defensive_epsilon": 0.05,
+    "output_bundle": "artifacts/dual/dual_model"
+  }
+}

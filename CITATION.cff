@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use hnsbi-toolkit, please cite the software and the accompanying hNDE paper."
+title: "hnsbi-toolkit"
+type: software
+version: 0.1.0
+date-released: 2026-07-26
+authors:
+  - family-names: "Lopes de Sá"
+    given-names: "Rafael Coelho"
+    orcid: "https://orcid.org/0000-0001-5200-9195"
+  - family-names: "Sandesara"
+    given-names: "Jay"
+    orcid: "https://orcid.org/0000-0002-6016-8011"
+repository-code: "https://github.com/rafaellopesdesa/hnsbi-toolkit"
+url: "https://hnsbi-toolkit.readthedocs.io"
+license: MIT

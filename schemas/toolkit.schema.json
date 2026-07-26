@@ -1,0 +1,1212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rafaellopesdesa/hnsbi-toolkit/main/schemas/toolkit.schema.json",
+  "title": "hnsbi-toolkit configuration",
+  "description": "Versioned configuration for frequentist hNDE and Bayesian dual hNPE-hNDE workflows.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "features"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "description": "Configuration contract version, independent of the Python package version."
+    },
+    "features": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Ordered observation features presented to every model."
+    },
+    "output_dir": {
+      "type": "string",
+      "minLength": 1,
+      "default": "artifacts",
+      "description": "Directory for portable model bundles and generated results."
+    },
+    "frequentist": {
+      "$ref": "#/$defs/frequentist"
+    },
+    "bayesian": {
+      "$ref": "#/$defs/bayesian"
+    }
+  },
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": [
+        "frequentist"
+      ]
+    },
+    {
+      "required": [
+        "bayesian"
+      ]
+    }
+  ],
+  "$defs": {
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "fraction": {
+      "type": "number",
+      "minimum": 0.0,
+      "exclusiveMaximum": 1.0
+    },
+    "flowValidationFraction": {
+      "type": "number",
+      "minimum": 0.0,
+      "exclusiveMaximum": 1.0
+    },
+    "openFraction": {
+      "type": "number",
+      "exclusiveMinimum": 0.0,
+      "exclusiveMaximum": 1.0
+    },
+    "parameterPoint": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "dataSource": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "parquet",
+            "arrow_ipc",
+            "pyarrow",
+            "awkward"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "registry_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of an in-memory PyArrow or Awkward object supplied by Python."
+        },
+        "weight_column": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_id_column": {
+          "type": "string",
+          "minLength": 1
+        },
+        "split_column": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Bayesian sources use exact row values train, validation, or holdout. The column is preserved for other workflows."
+        },
+        "batch_size": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "log_density_column": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "path"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "paths"
+                ]
+              },
+              {
+                "required": [
+                  "registry_key"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "paths"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "registry_key"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "registry_key"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "paths"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "parquet",
+                  "arrow_ipc"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "paths"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "pyarrow",
+                  "awkward"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "registry_key"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "flowTraining": {
+      "type": "object",
+      "required": [
+        "epochs",
+        "batch_size",
+        "learning_rate"
+      ],
+      "properties": {
+        "epochs": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "batch_size": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "learning_rate": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "validation_fraction": {
+          "$ref": "#/$defs/flowValidationFraction",
+          "default": 0.2
+        },
+        "early_stopping_patience": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lr_reduction_factor": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "exclusiveMaximum": 1.0
+        },
+        "max_events": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "device": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "cpu",
+            "cuda"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "flow": {
+      "type": "object",
+      "required": [
+        "architecture",
+        "n_coupling_layers",
+        "hidden_features",
+        "hidden_layers",
+        "training"
+      ],
+      "properties": {
+        "architecture": {
+          "type": "string",
+          "enum": [
+            "realnvp",
+            "quadratic_spline"
+          ]
+        },
+        "n_coupling_layers": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "hidden_features": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "hidden_layers": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "scale_clip": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "spline_num_bins": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "spline_tail_bound": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "dropout_probability": {
+          "$ref": "#/$defs/fraction"
+        },
+        "training": {
+          "$ref": "#/$defs/flowTraining"
+        },
+        "onnx_opset": {
+          "type": "integer",
+          "minimum": 17,
+          "default": 17
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "architecture": {
+                "const": "quadratic_spline"
+              }
+            },
+            "required": [
+              "architecture"
+            ]
+          },
+          "then": {
+            "required": [
+              "spline_num_bins",
+              "spline_tail_bound"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "ratioTraining": {
+      "type": "object",
+      "required": [
+        "epochs",
+        "batch_size",
+        "learning_rate",
+        "hidden_layers",
+        "neurons"
+      ],
+      "properties": {
+        "epochs": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "batch_size": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "learning_rate": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "hidden_layers": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "neurons": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "activation": {
+          "type": "string",
+          "enum": [
+            "relu",
+            "swish",
+            "tanh"
+          ]
+        },
+        "validation_fraction": {
+          "$ref": "#/$defs/openFraction"
+        },
+        "holdout_fraction": {
+          "$ref": "#/$defs/openFraction"
+        },
+        "early_stopping_patience": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ratioModel": {
+      "type": "object",
+      "required": [
+        "ensemble_size",
+        "training"
+      ],
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "nsbi_common_utils",
+            "native"
+          ],
+          "default": "native"
+        },
+        "ensemble_size": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "training": {
+          "$ref": "#/$defs/ratioTraining"
+        },
+        "normalization": {
+          "type": "string",
+          "enum": [
+            "independent_reference_mean",
+            "conditional_reference_mean"
+          ]
+        },
+        "diagnostics": {
+          "type": "object",
+          "properties": {
+            "overtraining": {
+              "type": "boolean"
+            },
+            "calibration": {
+              "type": "boolean"
+            },
+            "reweighting": {
+              "type": "boolean"
+            },
+            "normalization": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "onnx_opset": {
+          "type": "integer",
+          "minimum": 17,
+          "default": 17
+        }
+      },
+      "additionalProperties": false
+    },
+    "bayesianRatioModel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ratioModel"
+        },
+        {
+          "not": {
+            "required": [
+              "diagnostics"
+            ]
+          }
+        }
+      ]
+    },
+    "constraint": {
+      "type": "object",
+      "required": [
+        "kind",
+        "mean",
+        "sigma"
+      ],
+      "properties": {
+        "kind": {
+          "const": "normal"
+        },
+        "mean": {
+          "type": "number"
+        },
+        "sigma": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "parameter": {
+      "type": "object",
+      "required": [
+        "name",
+        "nominal",
+        "role"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "poi",
+            "unconstrained",
+            "nuisance"
+          ]
+        },
+        "nominal": {
+          "type": "number"
+        },
+        "bounds": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "constraint": {
+          "$ref": "#/$defs/constraint"
+        }
+      },
+      "additionalProperties": false
+    },
+    "physicsSample": {
+      "type": "object",
+      "required": [
+        "name",
+        "source",
+        "nominal_yield",
+        "multiplier"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "source": {
+          "$ref": "#/$defs/dataSource"
+        },
+        "nominal_yield": {
+          "type": "number",
+          "minimum": 0.0
+        },
+        "multiplier": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Safe expression in the declared model parameters."
+        }
+      },
+      "additionalProperties": false
+    },
+    "systematicVariation": {
+      "type": "object",
+      "required": [
+        "sample",
+        "up",
+        "down"
+      ],
+      "properties": {
+        "sample": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "up": {
+          "$ref": "#/$defs/dataSource"
+        },
+        "down": {
+          "$ref": "#/$defs/dataSource"
+        },
+        "yield_up": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Optional multiplicative total-yield anchor relative to the nominal sample. If omitted, it is inferred from the integrated up and nominal event weights."
+        },
+        "yield_down": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Optional multiplicative total-yield anchor relative to the nominal sample. If omitted, it is inferred from the integrated down and nominal event weights."
+        }
+      },
+      "additionalProperties": false
+    },
+    "systematic": {
+      "type": "object",
+      "required": [
+        "name",
+        "parameter",
+        "type",
+        "variations"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "parameter": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "type": {
+          "const": "norm_plus_shape"
+        },
+        "interpolation": {
+          "type": "string",
+          "enum": [
+            "nsbi_code4p",
+            "linear"
+          ],
+          "default": "nsbi_code4p"
+        },
+        "variations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/systematicVariation"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "interpolation": {
+                "const": "nsbi_code4p"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "variations": {
+                "items": {
+                  "properties": {
+                    "yield_up": {
+                      "exclusiveMinimum": 0.0
+                    },
+                    "yield_down": {
+                      "exclusiveMinimum": 0.0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "frequentist": {
+      "type": "object",
+      "required": [
+        "reference",
+        "samples",
+        "flow",
+        "ratios",
+        "parameters",
+        "workspace"
+      ],
+      "properties": {
+        "reference": {
+          "$ref": "#/$defs/dataSource"
+        },
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/physicsSample"
+          }
+        },
+        "flow": {
+          "$ref": "#/$defs/flow"
+        },
+        "ratios": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/ratioModel"
+            },
+            {
+              "required": [
+                "backend"
+              ],
+              "not": {
+                "required": [
+                  "onnx_opset"
+                ]
+              },
+              "properties": {
+                "backend": {
+                  "const": "nsbi_common_utils"
+                },
+                "normalization": {
+                  "const": "independent_reference_mean"
+                }
+              }
+            }
+          ]
+        },
+        "parameters": {
+          "type": "array",
+          "minItems": 1,
+          "contains": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "const": "poi"
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 1,
+          "items": {
+            "$ref": "#/$defs/parameter"
+          }
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "backend",
+            "measurement",
+            "channel",
+            "output_path"
+          ],
+          "properties": {
+            "backend": {
+              "const": "nsbi_common_utils"
+            },
+            "measurement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channel": {
+              "type": "string",
+              "minLength": 1
+            },
+            "base_config": {
+              "type": "string",
+              "minLength": 1
+            },
+            "output_path": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "systematics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/systematic"
+          }
+        },
+        "toys": {
+          "type": "object",
+          "required": [
+            "parameter_points",
+            "toys_per_point",
+            "method"
+          ],
+          "properties": {
+            "parameter_points": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/parameterPoint"
+              }
+            },
+            "toys_per_point": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "method": {
+              "const": "importance_resampling"
+            },
+            "proposal_events": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "output_path": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "asimov": {
+          "type": "object",
+          "required": [
+            "parameter_point",
+            "n_events",
+            "output_path"
+          ],
+          "properties": {
+            "parameter_point": {
+              "$ref": "#/$defs/parameterPoint"
+            },
+            "n_events": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "normalization_source": {
+              "$ref": "#/$defs/dataSource"
+            },
+            "output_path": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "nis": {
+          "type": "object",
+          "required": [
+            "design_points",
+            "epsilon",
+            "pilot_events",
+            "target_events",
+            "flow",
+            "output_path"
+          ],
+          "properties": {
+            "design_points": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/parameterPoint"
+              }
+            },
+            "epsilon": {
+              "type": "number",
+              "exclusiveMinimum": 0.0,
+              "maximum": 1.0
+            },
+            "pilot_events": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "target_events": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "flow": {
+              "$ref": "#/$defs/flow"
+            },
+            "output_path": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "distribution": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "independent_normal",
+            "box_uniform",
+            "registry"
+          ]
+        },
+        "mean": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "number"
+          }
+        },
+        "scale": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0.0
+          }
+        },
+        "low": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "number"
+          }
+        },
+        "high": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "number"
+          }
+        },
+        "registry_key": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "independent_normal"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "mean",
+              "scale"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "low"
+                  ]
+                },
+                {
+                  "required": [
+                    "high"
+                  ]
+                },
+                {
+                  "required": [
+                    "registry_key"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "box_uniform"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "low",
+              "high"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "mean"
+                  ]
+                },
+                {
+                  "required": [
+                    "scale"
+                  ]
+                },
+                {
+                  "required": [
+                    "registry_key"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "registry"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "registry_key"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "mean"
+                  ]
+                },
+                {
+                  "required": [
+                    "scale"
+                  ]
+                },
+                {
+                  "required": [
+                    "low"
+                  ]
+                },
+                {
+                  "required": [
+                    "high"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "normalizer": {
+      "type": "object",
+      "required": [
+        "reference_draws_per_context",
+        "contexts",
+        "hidden_features",
+        "hidden_layers",
+        "training"
+      ],
+      "properties": {
+        "reference_draws_per_context": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "contexts": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "hidden_features": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "hidden_layers": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "training": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/flowTraining"
+            },
+            {
+              "not": {
+                "required": [
+                  "max_events"
+                ]
+              },
+              "properties": {
+                "validation_fraction": {
+                  "$ref": "#/$defs/openFraction"
+                }
+              }
+            }
+          ]
+        },
+        "onnx_opset": {
+          "type": "integer",
+          "minimum": 17,
+          "default": 17
+        }
+      },
+      "additionalProperties": false
+    },
+    "bayesian": {
+      "type": "object",
+      "required": [
+        "theta_features",
+        "datasets",
+        "design_distributions",
+        "posterior_flow",
+        "posterior_ratio",
+        "likelihood_flow",
+        "likelihood_ratio",
+        "normalizer",
+        "output_bundle"
+      ],
+      "properties": {
+        "theta_features": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "datasets": {
+          "type": "object",
+          "required": [
+            "rho",
+            "nu",
+            "kappa"
+          ],
+          "properties": {
+            "rho": {
+              "$ref": "#/$defs/dataSource"
+            },
+            "rho_residual": {
+              "$ref": "#/$defs/dataSource"
+            },
+            "nu": {
+              "$ref": "#/$defs/dataSource"
+            },
+            "kappa": {
+              "$ref": "#/$defs/dataSource"
+            },
+            "validation": {
+              "$ref": "#/$defs/dataSource"
+            }
+          },
+          "additionalProperties": false
+        },
+        "design_distributions": {
+          "type": "object",
+          "required": [
+            "rho",
+            "nu",
+            "kappa"
+          ],
+          "properties": {
+            "rho": {
+              "$ref": "#/$defs/distribution"
+            },
+            "nu": {
+              "$ref": "#/$defs/distribution"
+            },
+            "kappa": {
+              "$ref": "#/$defs/distribution"
+            }
+          },
+          "additionalProperties": false
+        },
+        "posterior_flow": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/flow"
+            },
+            {
+              "properties": {
+                "architecture": {
+                  "const": "quadratic_spline"
+                }
+              }
+            }
+          ]
+        },
+        "posterior_ratio": {
+          "$ref": "#/$defs/bayesianRatioModel"
+        },
+        "likelihood_flow": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/flow"
+            },
+            {
+              "properties": {
+                "architecture": {
+                  "const": "quadratic_spline"
+                }
+              }
+            }
+          ]
+        },
+        "likelihood_ratio": {
+          "$ref": "#/$defs/bayesianRatioModel"
+        },
+        "normalizer": {
+          "$ref": "#/$defs/normalizer"
+        },
+        "defensive_epsilon": {
+          "type": "number",
+          "minimum": 0.0,
+          "exclusiveMaximum": 1.0
+        },
+        "output_bundle": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,133 @@
+name: Core tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install core and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]' jsonschema
+
+      - name: Check installed dependencies
+        run: python -m pip check
+
+      - name: Run core tests
+        run: python -m pytest
+
+      - name: Lint
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install ruff
+          ruff check src tests
+
+  wheel:
+    name: Wheel install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build and install wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+          python -m venv /tmp/hnsbi-wheel
+          /tmp/hnsbi-wheel/bin/python -m pip install dist/*.whl
+          cd /tmp
+          /tmp/hnsbi-wheel/bin/python -c "from hnsbi.config import _load_schema; assert _load_schema()['title'] == 'hnsbi-toolkit configuration'"
+
+  flows:
+    name: Flow and ONNX smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install flow stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[flows,test]'
+      - name: Run flow export tests
+        run: python -m pytest tests/test_flow_onnx_optional.py
+
+  bayes:
+    name: Native dual Bayesian smoke
+    runs-on: ubuntu-latest
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install native Bayesian stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[bayes,test]'
+      - name: Check installed dependencies
+        run: python -m pip check
+      - name: Train and export native Bayesian components
+        run: |
+          python -m pytest \
+            tests/test_bayes_native_backend.py \
+            tests/test_bayes_native_end_to_end_optional.py
+
+  upstream-lhc:
+    name: Pinned nsbi-common-utils interoperability
+    runs-on: ubuntu-latest
+    env:
+      JAX_ENABLE_X64: "true"
+      JAX_PLATFORM_NAME: cpu
+      XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install pinned upstream and LHC stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements/lhc-upstream.txt
+          python -m pip install -e '.[lhc,test]'
+      - name: Check installed dependencies
+        run: python -m pip check
+      - name: Exercise real workspace, model, fit, and scan
+        run: python -m pytest tests/test_upstream_real_optional.py

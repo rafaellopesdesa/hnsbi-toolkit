@@ -1,0 +1,24 @@
+hnsbi-toolkit
+=============
+
+The statistical design and example implementations were developed alongside
+the hybrid neural density-estimation project.
+
+Portions of the flow, streaming-data, and ratio-integration design are adapted
+from the MIT-licensed `nsbi-lhc-toolkit` project:
+
+  Copyright (c) 2025-present Jay Sandesara
+  https://github.com/rafaellopesdesa/nsbi-lhc-toolkit
+
+The integration and archival notebook provenance for this release is pinned to
+commit:
+
+  e1249eb90e78b9fcbf24bf39cb9575fa3b621785
+
+The five preserved notebooks and their required helper files originate from:
+
+  workshops/ml4hep_tifr_colab/
+
+The upstream nsbi-lhc-toolkit remains a runtime integration rather than being
+vendored here. Its classifier training, calibration diagnostics, workspace
+model, and JAX/Minuit inference interfaces are used where applicable.
