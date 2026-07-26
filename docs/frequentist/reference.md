@@ -1,6 +1,6 @@
 # Reference flow
 
-The reference dataset defines the proposal density \(q(x)\). It need not have
+The reference dataset defines the proposal density $q(x)$. It need not have
 the physical signal/background composition, but it must cover every region in
 which a process ratio will be evaluated.
 
@@ -14,7 +14,7 @@ Two architectures are part of the stable configuration:
 The flow training split must be disjoint from:
 
 - samples used for final closure;
-- reference events used to estimate \(\mathbb E_q[\widehat r_s]\);
+- reference events used to estimate $\mathbb E_q[\widehat r_s]$;
 - events used to report paper-level performance.
 
 ## Deployment bundle
@@ -22,7 +22,7 @@ The flow training split must be disjoint from:
 A reference bundle contains:
 
 - `<prefix>.log_prob.onnx`, mapping original ordered features to
-  \(\log q(x)\);
+  $\log q(x)$;
 - `<prefix>.base_to_data.onnx`, mapping a supplied latent normal draw to
   observation space;
 - `<prefix>.data_to_base.onnx`, mapping observations back to latent space;

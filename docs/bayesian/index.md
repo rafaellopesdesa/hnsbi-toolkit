@@ -4,11 +4,11 @@ The dual model freezes five learned artifacts:
 
 | Artifact | Role | Normalized object |
 |---|---|---|
-| \(q_\phi(\theta\mid x)\) | parameter proposal | conditional posterior-flow proposal |
-| \(\widehat r_{\rm P}(\theta;x)\) | posterior correction | \(q_\phi\widehat r_{\rm P}\), after proposal/design reweighting |
-| \(q_\eta(x\mid\theta)\) | observation proposal | conditional flow in observation space |
-| \(\widehat r_{\rm C}(x;\theta)\) | likelihood residual | corrects \(q_\eta\) toward simulator data |
-| \(\widehat Z_{\rm C}(\theta)\) | conditional partition function | \(q_\eta\widehat r_{\rm C}/\widehat Z_{\rm C}\) |
+| $q_\phi(\theta\mid x)$ | parameter proposal | conditional posterior-flow proposal |
+| $\widehat r_{\rm P}(\theta;x)$ | posterior correction | $q_\phi\widehat r_{\rm P}$, after proposal/design reweighting |
+| $q_\eta(x\mid\theta)$ | observation proposal | conditional flow in observation space |
+| $\widehat r_{\rm C}(x;\theta)$ | likelihood residual | corrects $q_\eta$ toward simulator data |
+| $\widehat Z_{\rm C}(\theta)$ | conditional partition function | $q_\eta\widehat r_{\rm C}/\widehat Z_{\rm C}$ |
 
 The posterior-side route is efficient and amortized. The likelihood-side route
 is generative, supports alternative priors, and enables evidence, predictive,

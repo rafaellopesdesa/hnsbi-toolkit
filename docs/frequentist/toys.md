@@ -1,6 +1,6 @@
 # Pseudo-experiments
 
-At parameter point \(\theta_0\), a toy from an extended model first draws the
+At parameter point $\theta_0$, a toy from an extended model first draws the
 event count
 
 $$
@@ -8,7 +8,7 @@ N\sim\operatorname{Poisson}(\nu(\theta_0)),
 $$
 
 then draws event locations from
-\(\lambda(x\mid\theta_0)/\nu(\theta_0)\).
+$\lambda(x\mid\theta_0)/\nu(\theta_0)$.
 
 If direct component simulators are unavailable, the toolkit can use the
 reference flow as a proposal and perform self-normalized importance

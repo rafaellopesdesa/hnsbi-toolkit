@@ -1,7 +1,7 @@
 # Weighted unbinned Asimov samples
 
-For \(N\) independent points \(x_i\sim q\), the direct weighted Asimov sample
-at \(\theta_A\) uses
+For $N$ independent points $x_i\sim q$, the direct weighted Asimov sample
+at $\theta_A$ uses
 
 $$
 w_i(\theta_A)
@@ -24,11 +24,11 @@ not repair inadequate reference support.
 ## Closure requirements
 
 For a signal-strength parameter, independently normalized ratios ensure
-\(\mathbb E_q[\widetilde r_s]=1\). The expected extended score then vanishes at
+$\mathbb E_q[\widetilde r_s]=1$. The expected extended score then vanishes at
 the generating signal strength in the population limit. The implementation
 supports two deliberately different normalization modes:
 
-- `normalization="sample"` fits each \(C_s\) on the same reference support
+- `normalization="sample"` fits each $C_s$ on the same reference support
   used by the returned quadrature. This enforces exact finite-sample component
   normalization and total-yield closure in yield-only directions.
 - `normalization="fixed"` uses a supplied `RatioNormalizer`, normally fitted

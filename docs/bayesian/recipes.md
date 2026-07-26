@@ -27,17 +27,17 @@ and weight-tail summaries.
 
 ## Direct parameter proposal
 
-Draw \(\theta_j\sim q_\phi(\cdot\mid x_o)\), or from its defensive mixture with
-\(\rho\). This supplies efficient points but is not by itself the corrected
+Draw $\theta_j\sim q_\phi(\cdot\mid x_o)$, or from its defensive mixture with
+$\rho$. This supplies efficient points but is not by itself the corrected
 analysis posterior.
 
 ## Classifier correction of the posterior proposal
 
-Let \(d(\theta\mid x_o)\) denote the exact denominator against which
-\(\widehat r_{\rm P}\) was trained: either \(q_\phi\) or its recorded defensive
-mixture with \(\rho\). For analysis prior \(\pi\), design \(\rho\), actual
-inference proposal \(g\), new auxiliary likelihood \(f\), and optional
-baseline auxiliary likelihood \(f_0\), use
+Let $d(\theta\mid x_o)$ denote the exact denominator against which
+$\widehat r_{\rm P}$ was trained: either $q_\phi$ or its recorded defensive
+mixture with $\rho$. For analysis prior $\pi$, design $\rho$, actual
+inference proposal $g$, new auxiliary likelihood $f$, and optional
+baseline auxiliary likelihood $f_0$, use
 
 $$
 u_j^{\rm P}
@@ -48,12 +48,12 @@ u_j^{\rm P}
 $$
 
 `hnpe_log_weights()` applies this accounting. When its `proposal_log_prob` is
-omitted, the supplied points are assumed to have been drawn from \(d\), so the
+omitted, the supplied points are assumed to have been drawn from $d$, so the
 corresponding denominator/proposal terms cancel numerically.
 
 ## Normalized posterior
 
-Set \(w_j=u_j/\sum_k u_k\). Expectations are weighted sums over the parameter
+Set $w_j=u_j/\sum_k u_k$. Expectations are weighted sums over the parameter
 proposal. Report
 
 $$
@@ -73,12 +73,12 @@ $$
  /\widehat Z_{\rm C}(\theta).
 $$
 
-Generation draws candidates from \(q_\eta\), weights or resamples them with
-\(\widehat r_{\rm C}\), and retains the conditional-normalization diagnostics.
+Generation draws candidates from $q_\eta$, weights or resamples them with
+$\widehat r_{\rm C}$, and retains the conditional-normalization diagnostics.
 
 ## Likelihood-side posterior and dual consensus
 
-For any parameter proposal \(g\),
+For any parameter proposal $g$,
 
 $$
 u_j^{\rm L}
@@ -97,7 +97,7 @@ the same sampled parameter points.
 
 ## Absolute evidence
 
-For design prior \(\rho\),
+For design prior $\rho$,
 
 $$
 p_\rho(x_o)
@@ -105,20 +105,20 @@ p_\rho(x_o)
 $$
 
 Estimate the integral by Monte Carlo or another declared quadrature and return
-its Monte Carlo uncertainty. For a different prior, replace \(\rho\) only when
+its Monte Carlo uncertainty. For a different prior, replace $\rho$ only when
 the integration proposal has adequate support.
 
 ## Posterior-predictive generation without the simulator
 
-Draw or resample \(\theta\) from the corrected posterior. For each parameter,
-draw \(x_{\rm rep}\sim q_\eta(\cdot\mid\theta)\), correct with
-\(\widehat r_{\rm C}(x_{\rm rep};\theta)\), and resample. These replicas support
+Draw or resample $\theta$ from the corrected posterior. For each parameter,
+draw $x_{\rm rep}\sim q_\eta(\cdot\mid\theta)$, correct with
+$\widehat r_{\rm C}(x_{\rm rep};\theta)$, and resample. These replicas support
 checks and decisions but do not replace validation on independent simulator
 replicas.
 
 ## Selection integrals without the simulator
 
-For selection indicator \(I_{\rm det}(x)\),
+For selection indicator $I_{\rm det}(x)$,
 
 $$
 \beta(\theta)
@@ -128,7 +128,7 @@ $$
 }{\widehat Z_{\rm C}(\theta)}.
 $$
 
-Population selection functions follow by integrating \(\beta\) against the
+Population selection functions follow by integrating $\beta$ against the
 population model. `SelectionEstimate` returns the ordinary and self-normalized
 Monte Carlo estimates, the sampled reference normalization, and conditional
 ESS. The current API does not attach an uncertainty estimate; quantify Monte
@@ -137,14 +137,14 @@ procedure rather than interpreting ESS itself as a standard error.
 
 ## Nuisance-prior and auxiliary-likelihood updates
 
-Keep nuisances explicit in \(\theta\). Reweight existing parameter proposals by
+Keep nuisances explicit in $\theta$. Reweight existing parameter proposals by
 the ratio of the new prior to the design prior and by the new auxiliary
 likelihood. No neural retraining is required when support is adequate. A low
-ESS, large Pareto-\(k\), or missing support is a failed update, not a reason to
+ESS, large Pareto-$k$, or missing support is a failed update, not a reason to
 clip weights silently.
 
 `prior_auxiliary_log_update()` returns the additive log factor
-\(\log(\pi/\rho)+\log(f/f_0)\). `update_posterior_weights()` applies this factor
+$\log(\pi/\rho)+\log(f/f_0)$. `update_posterior_weights()` applies this factor
 to existing log weights and returns newly normalized linear weights. The
-optional baseline \(f_0\) makes it possible to replace, rather than merely
+optional baseline $f_0$ makes it possible to replace, rather than merely
 append, an auxiliary likelihood.

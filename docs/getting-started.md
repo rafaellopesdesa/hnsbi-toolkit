@@ -85,7 +85,7 @@ unbinned channel and measurement with the verified hNSBI arrays and metadata.
 Without `base_config`, it writes the minimal compatible skeleton directly.
 
 For a Bayesian project whose Parquet datasets were already sampled under
-\(\rho\), \(\nu\), and \(\kappa\), the native five-stage trainer is one call:
+$\rho$, $\nu$, and $\kappa$, the native five-stage trainer is one call:
 
 ```python
 dual_artifacts = project.train_dual()

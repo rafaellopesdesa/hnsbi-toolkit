@@ -9,6 +9,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_DIRECTORY = ROOT / "examples" / "notebooks"
 NOTEBOOKS = tuple(sorted(NOTEBOOK_DIRECTORY.glob("*.ipynb")))
+DOCUMENTATION_FILES = (
+    ROOT / "README.md",
+    *sorted((ROOT / "docs").rglob("*.md")),
+    *sorted((ROOT / "examples").rglob("*.md")),
+)
 FREQUENTIST_NOTEBOOKS = (
     NOTEBOOK_DIRECTORY / "hybrid_reference_flow_and_density_ratios.ipynb",
     NOTEBOOK_DIRECTORY / "neural_importance_sampling_asimov.ipynb",
@@ -26,6 +31,14 @@ def _load_notebook(path: Path) -> dict:
 def _source(notebook: dict) -> str:
     return "\n".join(
         "".join(cell.get("source", ())) for cell in notebook["cells"]
+    )
+
+
+def _markdown_source(notebook: dict) -> str:
+    return "\n".join(
+        "".join(cell.get("source", ()))
+        for cell in notebook["cells"]
+        if cell["cell_type"] == "markdown"
     )
 
 
@@ -55,3 +68,15 @@ def test_frequentist_notebooks_install_upstream_through_lhc_extra() -> None:
         assert 'f"{REPO_DIR}[data,flows,lhc,plots]"' in source
         assert "nsbi_common_utils" in source
         assert "nsbi-common-utils @" not in source
+
+
+def test_documentation_uses_dollar_math_delimiters() -> None:
+    legacy_delimiters = (r"\(", r"\)", r"\[", r"\]")
+
+    for path in DOCUMENTATION_FILES:
+        source = path.read_text(encoding="utf-8")
+        assert not any(delimiter in source for delimiter in legacy_delimiters), path
+
+    for path in NOTEBOOKS:
+        source = _markdown_source(_load_notebook(path))
+        assert not any(delimiter in source for delimiter in legacy_delimiters), path

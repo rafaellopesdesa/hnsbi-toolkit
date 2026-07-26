@@ -2,8 +2,8 @@
 
 The frequentist workflow follows five separable stages:
 
-1. train a normalized flow \(q(x)\) on a user-supplied reference dataset;
-2. estimate \(p_s/q\) for every nominal physics sample, delegating classifier
+1. train a normalized flow $q(x)$ on a user-supplied reference dataset;
+2. estimate $p_s/q$ for every nominal physics sample, delegating classifier
    training and its established diagnostics to `nsbi-common-utils`;
 3. estimate each ratio normalization on independent reference data;
 4. connect the resulting intensity to an LHC-style workspace, fit, and scan;

@@ -7,13 +7,13 @@ routes.
 
 - posterior-flow closure and simulation-based calibration where appropriate;
 - posterior residual member validation and
-  \(\mathbb E_g[\widehat r_{\rm P}]\) checks;
+  $\mathbb E_g[\widehat r_{\rm P}]$ checks;
 - conditional observation-flow classifier two-sample tests;
-- likelihood residual closure at held-out \(\theta\) values;
-- direct Monte Carlo checks of \(\widehat Z_{\rm C}(\theta)\);
-- member-wise extreme-weight and Pareto-\(k\) summaries;
+- likelihood residual closure at held-out $\theta$ values;
+- direct Monte Carlo checks of $\widehat Z_{\rm C}(\theta)$;
+- member-wise extreme-weight and Pareto-$k$ summaries;
 - posterior-side versus likelihood-side normalized weights;
-- the pointwise bridge between \(\widehat r_{\rm P}\) and the normalized
+- the pointwise bridge between $\widehat r_{\rm P}$ and the normalized
   conditional likelihood;
 - independent simulator posterior-predictive validation.
 

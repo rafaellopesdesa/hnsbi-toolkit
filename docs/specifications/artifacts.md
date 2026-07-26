@@ -34,9 +34,9 @@ are:
 
 | Role | Meaning |
 |---|---|
-| `log-prob-onnx` | physical features \(\rightarrow \log q(x)\) |
-| `base-to-data-onnx` | caller-supplied standard-normal noise \(\rightarrow x\) |
-| `data-to-base-onnx` | physical features \(\rightarrow\) latent code |
+| `log-prob-onnx` | physical features $\rightarrow \log q(x)$ |
+| `base-to-data-onnx` | caller-supplied standard-normal noise $\rightarrow x$ |
+| `data-to-base-onnx` | physical features $\rightarrow$ latent code |
 
 Sampling randomness intentionally remains in the caller. This makes ONNX
 generation reproducible for a fixed latent array.
@@ -80,7 +80,7 @@ does not deserialize an untrusted pickle. Loading a serialized calibrator
 likewise requires an explicit unsafe-pickle opt-in.
 
 The independent process normalizers
-\(C_s=\mathbb E_q[\widehat r_s]\) are returned in the
+$C_s=\mathbb E_q[\widehat r_s]$ are returned in the
 `RatioSetTrainingArtifacts.normalizer` object and written as
 `ratios/ratio_normalization.json` with the
 `ratio_normalization.json.manifest.json` sidecar of artifact type
@@ -157,7 +157,7 @@ dual_model/
 
 Ensemble member filenames can differ when an established ratio backend is
 injected; the manifest roles, rather than guessed filenames, are the stable
-contract. `dual_model.manifest.json` records the ordered \(\theta\) and
+contract. `dual_model.manifest.json` records the ordered $\theta$ and
 observation signatures, graph tensor names, transforms and Jacobian
 conventions, ensemble reductions, posterior-ratio denominator provenance, and
 source/configuration provenance. `verify_dual_artifact_manifest()` checks all

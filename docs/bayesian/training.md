@@ -1,7 +1,7 @@
 # Training the five artifacts
 
-Users provide simulator datasets already drawn under the \(\rho\), \(\nu\),
-and \(\kappa\) parameter designs. Separate files or explicit independent
+Users provide simulator datasets already drawn under the $\rho$, $\nu$,
+and $\kappa$ parameter designs. Separate files or explicit independent
 splits are strongly preferred.
 
 `Project.train_dual()` provides the complete native route. It materializes the
@@ -41,28 +41,28 @@ responsibility.
 
 ## Posterior flow and correction
 
-Train \(q_\phi(\theta\mid x)\) on
-\(\theta\sim\rho,\ x\sim p(x\mid\theta)\), then freeze it. On an independent
-matched-\(x\) sample, compare:
+Train $q_\phi(\theta\mid x)$ on
+$\theta\sim\rho,\ x\sim p(x\mid\theta)$, then freeze it. On an independent
+matched-$x$ sample, compare:
 
 $$
 j_1(\theta,x)=\rho(\theta)p(x\mid\theta)
 $$
 
-with rows in which the same \(x\) is paired with
-\(\widetilde\theta\sim q_\phi(\cdot\mid x)\). Split by the matched observation
+with rows in which the same $x$ is paired with
+$\widetilde\theta\sim q_\phi(\cdot\mid x)$. Split by the matched observation
 group before constructing classifier rows.
 
 When `defensive_epsilon > 0`, the negative parameter is instead drawn from
-\((1-\epsilon)q_\phi(\theta\mid x)+\epsilon\rho(\theta)\). The exact
-denominator and \(\epsilon\) are recorded in the dual manifest and reused by
+$(1-\epsilon)q_\phi(\theta\mid x)+\epsilon\rho(\theta)$. The exact
+denominator and $\epsilon$ are recorded in the dual manifest and reused by
 posterior inference.
 
 ## Conditional likelihood and residual
 
-Train \(q_\eta(x\mid\theta)\) using
-\(\theta\sim\nu,\ x\sim p(x\mid\theta)\), then freeze it. For
-\(\theta\sim\kappa\), create matched rows
+Train $q_\eta(x\mid\theta)$ using
+$\theta\sim\nu,\ x\sim p(x\mid\theta)$, then freeze it. For
+$\theta\sim\kappa$, create matched rows
 
 $$
 x^+\sim p(\cdot\mid\theta),
@@ -70,13 +70,13 @@ x^+\sim p(\cdot\mid\theta),
 x^-\sim q_\eta(\cdot\mid\theta).
 $$
 
-Keep each matched-\(\theta\) pair in one split. Using different parameter
+Keep each matched-$\theta$ pair in one split. Using different parameter
 distributions in the positive and negative classes introduces their density
 ratio into the classifier odds.
 
 ## Conditional normalization
 
-At many contexts \(\theta\), draw from the frozen \(q_\eta\) and estimate
+At many contexts $\theta$, draw from the frozen $q_\eta$ and estimate
 
 $$
 \log \widehat Z_{\rm C}(\theta)
@@ -87,10 +87,10 @@ $$
 $$
 
 A smooth regressor amortizes this calculation as the fifth stored object,
-\(\widehat Z_{\rm C}\), and requires independent conditional checks.
+$\widehat Z_{\rm C}$, and requires independent conditional checks.
 
-The native backend draws the configured number of \(q_\eta\) observations at
-each configured context, constructs Monte Carlo \(\log Z_{\rm C}\) targets,
+The native backend draws the configured number of $q_\eta$ observations at
+each configured context, constructs Monte Carlo $\log Z_{\rm C}$ targets,
 and trains an MLP regressor. It retains the targets and training history next
 to the ONNX graph so validation is reproducible. Configured validation
 contexts receive independent Monte Carlo targets for checkpoint selection;

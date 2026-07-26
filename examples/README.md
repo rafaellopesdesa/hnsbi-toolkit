@@ -9,7 +9,7 @@ templates:
   NIS, and up/down shape variations.
 - `dual_complete.json` describes the five frozen objects in the dual
   hNPE--hNDE construction using independent data drawn under the
-  \(\rho\), \(\nu\), and \(\kappa\) designs.
+  $\rho$, $\nu$, and $\kappa$ designs.
 
 Paths are resolved relative to the configuration file by workflow runners.
 For a Python dictionary backed by an in-memory `pyarrow.Table` or

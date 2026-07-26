@@ -2,15 +2,15 @@
 
 ## A flow plus a residual ratio
 
-Let \(q(x)\) be a normalized reference density represented by a normalizing
-flow and let \(p_s(x)\) be the density of physics sample \(s\). A classifier
+Let $q(x)$ be a normalized reference density represented by a normalizing
+flow and let $p_s(x)$ be the density of physics sample $s$. A classifier
 can estimate the residual ratio
 
 $$
 r_s(x) = \frac{p_s(x)}{q(x)}.
 $$
 
-The hybrid estimate is \(q(x)\widehat r_s(x)\). A finite classifier does not
+The hybrid estimate is $q(x)\widehat r_s(x)$. A finite classifier does not
 guarantee that this product integrates to one, so the deployable ratio is
 
 $$
@@ -25,7 +25,7 @@ shape error can masquerade as a yield change and displace the Asimov minimum.
 
 ## An intensity, not only a density
 
-For expected yields \(\nu_s(\theta)\), the event intensity is
+For expected yields $\nu_s(\theta)$, the event intensity is
 
 $$
 \lambda(x\mid\theta)
@@ -33,17 +33,17 @@ $$
 $$
 
 The extended likelihood contains both the event term and the integral
-\(\nu(\theta)=\int\lambda(x\mid\theta)\,dx\). Sample multipliers in a serialized
+$\nu(\theta)=\int\lambda(x\mid\theta)\,dx$. Sample multipliers in a serialized
 configuration therefore use a restricted expression language and must remain
 nonnegative over the fitted parameter domain.
 
 ## The dual Bayesian construction
 
 The posterior side starts with a conditional parameter flow
-\(q_\phi(\theta\mid x)\) and a correction
-\(\widehat r_{\rm P}(\theta;x)\). The observation side starts with a
-conditional flow \(q_\eta(x\mid\theta)\), a residual ratio
-\(\widehat r_{\rm C}(x;\theta)\), and a parameter-dependent normalizer
+$q_\phi(\theta\mid x)$ and a correction
+$\widehat r_{\rm P}(\theta;x)$. The observation side starts with a
+conditional flow $q_\eta(x\mid\theta)$, a residual ratio
+$\widehat r_{\rm C}(x;\theta)$, and a parameter-dependent normalizer
 
 $$
 \widehat Z_{\rm C}(\theta)

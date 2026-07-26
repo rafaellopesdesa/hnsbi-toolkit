@@ -1,6 +1,6 @@
 # Neural-importance-sampling Asimov
 
-NIS learns a proposal \(g_\varphi(x)\) concentrated where the chosen
+NIS learns a proposal $g_\varphi(x)$ concentrated where the chosen
 collection of Asimov integrands is influential. The user supplies design
 points in parameter space; those points define the target, rather than being
 hidden in notebook code.
@@ -13,25 +13,25 @@ q_\epsilon(x)
 \qquad 0<\epsilon\leq 1.
 $$
 
-The final importance denominator is the actual mixture \(q_\epsilon\).
+The final importance denominator is the actual mixture $q_\epsilon$.
 Process ratios remain normalized with respect to the original reference
-\(q\), because that normalization defines the physical component densities.
+$q$, because that normalization defines the physical component densities.
 
 ## Workflow
 
-1. Draw a high-statistics pilot sample from \(q\).
+1. Draw a high-statistics pilot sample from $q$.
 2. Evaluate normalized ratios and influence amplitudes at every design point.
 3. Train the NIS flow on the resulting nonnegative pilot weights.
 4. Freeze and export the proposal.
 5. Draw reproducibly from both mixture components.
-6. Evaluate \(q\), \(g_\varphi\), and \(q_\epsilon\) exactly for every draw.
+6. Evaluate $q$, $g_\varphi$, and $q_\epsilon$ exactly for every draw.
 7. Return the efficient Asimov sample with ESS and training diagnostics.
 
-The returned NIS Asimov uses normalized \(q/q_\epsilon\) quadrature weights
+The returned NIS Asimov uses normalized $q/q_\epsilon$ quadrature weights
 and fits every process-ratio normalizer on that same weighted support. It
 therefore has exact finite-support total-yield closure, while the independent
 direct-reference normalizer remains the appropriate learned-ratio validation.
-Metadata records the defensive bound \(q/q_\epsilon\leq1/\epsilon\), its
+Metadata records the defensive bound $q/q_\epsilon\leq1/\epsilon$, its
 observed maximum, reference-weight diagnostics, raw count, ESS, and intensity
 fingerprint.
 
@@ -45,11 +45,11 @@ points.
 ## Required validation
 
 - proposal versus influence-target marginals and pair projections;
-- centered \(\log(g_\varphi/q)\) behavior and finite density checks;
+- centered $\log(g_\varphi/q)$ behavior and finite density checks;
 - repeated small-sample scans;
 - convergence of scan error, fitted minimum, and ESS versus raw count;
 - comparison with a high-statistics direct-reference benchmark;
-- sensitivity to the defensive \(\epsilon\).
+- sensitivity to the defensive $\epsilon$.
 
 An ESS gain is useful only if the scan remains unbiased at all supplied design
 points.
@@ -69,7 +69,7 @@ from the proposal implementation:
 - `compare_nis_epsilons()` evaluates user-supplied defensive-mixture choices
   with the same metric definitions.
 
-Use `nis_prefix_convergence()` for raw-\(N\) convergence and
+Use `nis_prefix_convergence()` for raw-$N$ convergence and
 `compare_nis_epsilons()` for the defensive-mixture scan. For likelihood-scan
 closure, run `ExtendedUnbinnedLikelihood.profile_scan()` (or
 `NsbiCommonUtilsInference.perform_profile_scan()` for an upstream-compatible

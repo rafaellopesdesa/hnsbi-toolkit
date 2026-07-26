@@ -1,8 +1,8 @@
 # Density ratios
 
-For nominal sample \(s\), train a balanced classifier between \(p_s\) and the
-frozen reference \(q\). With equal class normalization, optimal classifier
-odds estimate \(r_s=p_s/q\).
+For nominal sample $s$, train a balanced classifier between $p_s$ and the
+frozen reference $q$. With equal class normalization, optimal classifier
+odds estimate $r_s=p_s/q$.
 
 The `nsbi_common_utils` backend owns the classifier training and established
 diagnostics. `hnsbi-toolkit` supplies data adapters, artifact packaging, and
@@ -29,7 +29,7 @@ C_s=\mathbb E_q[\widehat r_{\rm ens}(x)]
 $$
 
 on reference events not used for classifier training or member selection, and
-deploy \(\widetilde r_s=\widehat r_{\rm ens}/C_s\). Record the uncertainty,
+deploy $\widetilde r_s=\widehat r_{\rm ens}/C_s$. Record the uncertainty,
 sample size, ESS, and ratio-tail summary. `Project.train_ratios()` performs
 this independent draw, stores the means, Monte Carlo standard errors, row
 count, and normalization-weight ESS in a checksummed

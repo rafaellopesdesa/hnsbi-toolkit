@@ -21,10 +21,10 @@ It provides:
 The Bayesian workflow includes a native, configuration-driven trainer for the
 five frozen objects of the dual construction,
 
-\[
+$$
 \{q_\phi,\widehat r_{\rm P},q_\eta,\widehat r_{\rm C},
 \widehat Z_{\rm C}\},
-\]
+$$
 
 and a portable, checksummed ONNX manifest. Its inference API implements the
 posterior and likelihood routes, dual consensus weights, nuisance-prior and
