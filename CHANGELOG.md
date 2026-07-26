@@ -3,6 +3,15 @@
 This project follows Semantic Versioning for the Python API. Configuration and
 artifact formats have their own explicit schema versions.
 
+## Unreleased
+
+### Changed
+
+- The `lhc` extra now installs `nsbi-common-utils` from the canonical
+  `iris-hep/nsbi-lhc-toolkit` `main` branch; no user fork is used.
+- Colab examples now use `MyDrive/hsbi-toolkit` as their shared root and have
+  cleared outputs for clean reruns in the new workspace.
+
 ## 0.1.0 - 2026-07-26
 
 ### Added

@@ -8,7 +8,7 @@ expressions.
 
 The integration does not copy the upstream serializer. When
 `frequentist.workspace.base_config` is configured,
-`Project.write_configured_workspace()` invokes the pinned upstream
+`Project.write_configured_workspace()` invokes the upstream
 `WorkspaceBuilder` and then decorates its result. The base workspace must
 contain exactly the configured channel and measurement, and its sample-name
 set must match the hNSBI intensity. The decorator preserves unrelated

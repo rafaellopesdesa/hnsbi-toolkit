@@ -25,12 +25,11 @@ names and Google Colab badges:
 - `sbibm_slcp_benchmark.ipynb`
 - `sbibm_two_moons_benchmark.ipynb`
 
-These are archival, end-to-end reproductions from the paper development
-repository. Their scientific cells, stored outputs, and legacy `utils_*`
-helper dependency closure are intentionally preserved. Only filenames, Colab
-badges, environment bootstrap cells, and schema-only notebook metadata were
-adapted for this repository; the notebooks are not migrations to the package
-API.
+These are end-to-end reproductions from the paper development repository.
+Their scientific cells and legacy `utils_*` helper dependency closure are
+preserved. Filenames, Colab badges, environment bootstrap cells, and
+schema-only notebook metadata were adapted for this repository. Outputs were
+cleared for the new workspace, so the notebooks must be rerun.
 
 The full paper settings remain the reproducibility target and are intentionally
 too expensive for pull-request CI. Package tests use separate synthetic smoke

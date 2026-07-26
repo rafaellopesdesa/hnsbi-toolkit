@@ -18,20 +18,18 @@ python -m pip install \
   "hnsbi-toolkit[bayes] @ git+https://github.com/rafaellopesdesa/hnsbi-toolkit.git@main"
 ```
 
-The LHC workflow additionally needs the unreleased upstream package. This
-command works for wheel users and pins the exact commit tested by this
-release:
+The LHC workflow installs the canonical upstream `nsbi-lhc-toolkit` `main`
+branch through the `lhc` extra:
 
 ```bash
-python -m pip install \
-  "nsbi-common-utils @ git+https://github.com/rafaellopesdesa/nsbi-lhc-toolkit.git@e1249eb90e78b9fcbf24bf39cb9575fa3b621785"
 python -m pip install \
   "hnsbi-toolkit[lhc] @ git+https://github.com/rafaellopesdesa/hnsbi-toolkit.git@main"
 ```
 
-In a source checkout, `python -m pip install -r
-requirements/lhc-upstream.txt` installs the same upstream pin. It is kept
-outside wheel metadata because `nsbi-common-utils` has no independent release.
+In a source checkout, `python -m pip install -e ".[lhc]"` does the same.
+`requirements/lhc-upstream.txt` records the canonical direct requirement for
+CI and environment tooling. The upstream repository is consumed as a Python
+library and is not copied or cloned by hNSBI workflows.
 
 Load a JSON file or an equivalent Python dictionary with the same function:
 
@@ -82,7 +80,7 @@ runtime = project.workspace_runtime(workspace.path)
 ```
 
 When `frequentist.workspace.base_config` is present, the project first invokes
-the pinned upstream `WorkspaceBuilder` and then replaces the single configured
+the upstream `WorkspaceBuilder` and then replaces the single configured
 unbinned channel and measurement with the verified hNSBI arrays and metadata.
 Without `base_config`, it writes the minimal compatible skeleton directly.
 

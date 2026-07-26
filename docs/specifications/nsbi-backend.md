@@ -5,16 +5,18 @@ training and diagnostics, workspace construction, the JAX likelihood model,
 and iminuit fitting/scanning.
 
 Upstream repository:
-[`rafaellopesdesa/nsbi-lhc-toolkit`](https://github.com/rafaellopesdesa/nsbi-lhc-toolkit)
+[`iris-hep/nsbi-lhc-toolkit`](https://github.com/iris-hep/nsbi-lhc-toolkit)
 
-Tested commit:
-`e1249eb90e78b9fcbf24bf39cb9575fa3b621785`
+Tracked branch: `main`
 
 The dependency currently has no released package version. Its repository
 package metadata declares only NumPy even though the runtime uses pandas,
 uproot, Awkward, PyYAML, Torch, Lightning, scikit-learn, joblib, ONNX,
-ONNX Runtime, JAX, iminuit, and plotting libraries. Production environments
-must pin an exact Git commit and a tested constraints file.
+ONNX Runtime, JAX, iminuit, and plotting libraries. The hNSBI `lhc` extra
+therefore supplies the complete runtime stack and installs the upstream
+package with a PEP 508 direct reference. CI resolves and tests the current
+upstream `main` on every run. A frozen production release may additionally
+record the resolved commit in its environment lockfile.
 
 ## Adapter boundary
 
@@ -44,7 +46,7 @@ The adapter:
 - joblib preprocessing is sensitive to scikit-learn versions;
 - API compatibility is not guaranteed by a release.
 
-Integration tests against the pinned commit are therefore mandatory. If a
+Integration tests against upstream `main` are therefore mandatory. If a
 required provider hook is missing, prefer a small upstream contribution over
 copying the workspace or training implementation into this repository.
 

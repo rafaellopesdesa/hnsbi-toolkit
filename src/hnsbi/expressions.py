@@ -146,7 +146,7 @@ class Expression:
 
         result = flatten(self._tree.body)
         if result is None or len(result) != len(set(result)):
-            # The pinned upstream model de-duplicates modifier names per
+            # The upstream model de-duplicates modifier names per
             # sample, so ``mu * mu`` would be evaluated incorrectly as
             # ``mu``. Keep powers and repeated factors on the formula route.
             return None

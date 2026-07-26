@@ -1303,6 +1303,7 @@ lhc = [
     { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "mplhep", version = "1.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "mplhep", version = "1.3.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "nsbi-common-utils" },
     { name = "onnx" },
     { name = "onnxruntime", version = "1.24.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "onnxruntime", version = "1.28.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -1353,6 +1354,7 @@ requires-dist = [
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=2" },
     { name = "nflows", marker = "extra == 'bayes'", specifier = ">=0.14" },
     { name = "nflows", marker = "extra == 'flows'", specifier = ">=0.14" },
+    { name = "nsbi-common-utils", marker = "extra == 'lhc'", git = "https://github.com/iris-hep/nsbi-lhc-toolkit.git?rev=main" },
     { name = "numpy", specifier = ">=1.23" },
     { name = "onnx", marker = "extra == 'bayes'", specifier = ">=1.15" },
     { name = "onnx", marker = "extra == 'flows'", specifier = ">=1.15" },
@@ -2541,6 +2543,16 @@ dependencies = [
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/bd/16/a484db41aab28332f42080435c9342fa87cfc9a4fce5495521ea1e80ca27/nflows-0.14.tar.gz", hash = "sha256:6299844a62f9999fcdf2d95cb2d01c091a50136bd17826e303aba646b2d11b55", size = 45784, upload-time = "2020-12-02T11:55:56.545Z" }
+
+[[package]]
+name = "nsbi-common-utils"
+version = "0.1.dev794"
+source = { git = "https://github.com/iris-hep/nsbi-lhc-toolkit.git?rev=main#fc09848fc6540fd32310faebbe9db6eea7ecd17b" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
 
 [[package]]
 name = "numpy"

@@ -5,7 +5,7 @@ hNPE--hNDE constructions into reusable software.
 
 The frequentist workflow combines a normalized reference flow with the
 classifier density-ratio training and statistical-model machinery from
-[`nsbi-lhc-toolkit`](https://github.com/rafaellopesdesa/nsbi-lhc-toolkit).
+[`nsbi-lhc-toolkit`](https://github.com/iris-hep/nsbi-lhc-toolkit).
 It provides:
 
 - RealNVP and rational-quadratic-spline reference flows;
@@ -41,12 +41,10 @@ python -m pip install \
   "hnsbi-toolkit @ git+https://github.com/rafaellopesdesa/hnsbi-toolkit.git@main"
 ```
 
-The frequentist LHC integration uses the exact upstream commit tested for this
-release:
+The `lhc` extra installs the canonical upstream `main` branch as the
+`nsbi_common_utils` library:
 
 ```bash
-python -m pip install \
-  "nsbi-common-utils @ git+https://github.com/rafaellopesdesa/nsbi-lhc-toolkit.git@e1249eb90e78b9fcbf24bf39cb9575fa3b621785"
 python -m pip install \
   "hnsbi-toolkit[lhc] @ git+https://github.com/rafaellopesdesa/hnsbi-toolkit.git@main"
 ```
@@ -56,13 +54,13 @@ the `bayes` extra from the same Git source. A source checkout can install all
 development capabilities with:
 
 ```bash
-python -m pip install -r requirements/lhc-upstream.txt
 python -m pip install -e ".[data,flows,lhc,bayes,plots,test,docs]"
 ```
 
-The upstream package is intentionally not a dependency of the distributable
-wheel. The repository requirements file and the command above pin the same
-commit.
+`nsbi-lhc-toolkit` is used as a normal runtime library; it is neither cloned
+by user code nor vendored into this repository. The equivalent direct
+requirement is recorded in `requirements/lhc-upstream.txt` for CI and
+environment tooling.
 
 ## Minimal configuration
 
@@ -84,8 +82,8 @@ See `examples/configs/` and the
 [documentation](https://hnsbi-toolkit.readthedocs.io) for complete
 frequentist and Bayesian configurations. The paper notebooks are preserved
 under `examples/notebooks/` with their legacy `utils_*` helper closure and
-Google Colab entry points; they are archival reproductions, not rewritten
-package tutorials.
+Google Colab entry points. Their setup cells install the canonical upstream
+library through the `lhc` extra.
 
 ## Status
 

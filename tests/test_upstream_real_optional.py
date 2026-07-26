@@ -1,4 +1,4 @@
-"""End-to-end smoke test against the pinned nsbi-common-utils package.
+"""End-to-end smoke test against nsbi-common-utils from upstream ``main``.
 
 This module is deliberately skip-safe: the default test matrix does not
 install the heavyweight LHC stack.  The dedicated CI job installs that stack

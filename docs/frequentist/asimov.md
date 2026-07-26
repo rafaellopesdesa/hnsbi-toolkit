@@ -60,7 +60,7 @@ set of workspace modifiers for such a result.
 For constrained parameters, an Asimov result also records the auxiliary
 observation at the generating truth. The native likelihood uses that
 observation as the Gaussian constraint center, so a nonzero nuisance Asimov
-has zero constraint score at its truth. The pinned upstream runtime fixes
+has zero constraint score at its truth. The upstream runtime fixes
 unit-Gaussian auxiliary data at zero, so these off-center workspaces are
 explicitly routed to the native likelihood.
 

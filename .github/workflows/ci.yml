@@ -110,7 +110,7 @@ jobs:
             tests/test_bayes_native_end_to_end_optional.py
 
   upstream-lhc:
-    name: Pinned nsbi-common-utils interoperability
+    name: Upstream main nsbi-common-utils interoperability
     runs-on: ubuntu-latest
     env:
       JAX_ENABLE_X64: "true"
@@ -122,7 +122,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install pinned upstream and LHC stack
+      - name: Install upstream main and LHC stack
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements/lhc-upstream.txt

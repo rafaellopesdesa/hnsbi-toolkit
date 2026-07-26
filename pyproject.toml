@@ -63,6 +63,7 @@ lhc = [
   "scikit-learn>=1.2",
   "scipy>=1.10",
   "skl2onnx>=1.16",
+  "nsbi-common-utils @ git+https://github.com/iris-hep/nsbi-lhc-toolkit.git@main",
   "torch>=2.1",
   "uproot>=5",
 ]
@@ -104,6 +105,9 @@ hnsbi = "hnsbi.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hnsbi"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel.force-include]
 "schemas/toolkit.schema.json" = "hnsbi/schemas/toolkit.schema.json"
