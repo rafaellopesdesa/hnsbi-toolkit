@@ -42,5 +42,10 @@ napoleon_google_docstring = False
 
 html_theme = "furo"
 html_title = "hnsbi-toolkit"
+html_logo = "_static/hnsbi-logo.png"
+html_static_path = ["_static"]
+html_theme_options = {
+    "sidebar_hide_name": True,
+}
 
 nitpicky = False

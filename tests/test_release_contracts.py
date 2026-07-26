@@ -80,3 +80,14 @@ def test_documentation_uses_dollar_math_delimiters() -> None:
     for path in NOTEBOOKS:
         source = _markdown_source(_load_notebook(path))
         assert not any(delimiter in source for delimiter in legacy_delimiters), path
+
+
+def test_documentation_logo_is_configured() -> None:
+    conf = (ROOT / "docs" / "conf.py").read_text(encoding="utf-8")
+    logo = ROOT / "docs" / "_static" / "hnsbi-logo.png"
+
+    assert 'html_logo = "_static/hnsbi-logo.png"' in conf
+    assert 'html_static_path = ["_static"]' in conf
+    assert '"sidebar_hide_name": True' in conf
+    assert logo.is_file()
+    assert logo.stat().st_size > 0
