@@ -88,8 +88,8 @@ def test_lhc_extra_is_self_contained_and_includes_pyhf() -> None:
 
     assert "PyYAML>=6" in core
     assert "numpy>=1.23" in core
-    assert "numpy>=1.23,<2" in requirements
-    assert "scipy>=1.11.4,<1.15" in requirements
+    assert "numpy>=1.23" in requirements
+    assert "scipy>=1.11.4" in requirements
     assert any(requirement.startswith("pyhf") for requirement in requirements)
     assert not any("nsbi-common-utils" in requirement for requirement in requirements)
     assert not any("git+" in requirement for requirement in requirements)
@@ -181,13 +181,16 @@ def test_frequentist_notebooks_use_only_the_native_lhc_extra() -> None:
         assert "nsbi-common-utils @" not in source
 
 
-def test_frequentist_colab_setup_restarts_after_numpy_abi_change() -> None:
+def test_frequentist_colab_setup_keeps_numpy_and_jax_binary_stacks_coherent() -> None:
     for path in FREQUENTIST_NOTEBOOKS:
         source = _source(_load_notebook(path))
-        assert "loaded_numpy_version" in source
-        assert "installed_numpy_version" in source
+        assert "loaded_versions" in source
+        assert "jaxlib_version" in source
+        assert "jax-cuda12-plugin" in source
+        assert "jax-cuda13-plugin" in source
+        assert "jax[{extra}]" in source
         assert "signal.SIGKILL" in source
-        assert "load a consistent binary stack" in source
+        assert "load a consistent NumPy/JAX stack" in source
         assert "'pull', '--ff-only', 'origin', 'main'" in source
 
 
