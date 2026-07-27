@@ -194,6 +194,18 @@ def test_frequentist_colab_setup_keeps_numpy_and_jax_binary_stacks_coherent() ->
         assert "'pull', '--ff-only', 'origin', 'main'" in source
 
 
+def test_frequentist_colab_setup_activates_and_verifies_editable_source() -> None:
+    for path in FREQUENTIST_NOTEBOOKS:
+        source = _source(_load_notebook(path))
+        assert "source_root = (REPO / 'src').resolve()" in source
+        assert "sys.path.insert(0, import_path)" in source
+        assert "importlib.invalidate_caches()" in source
+        assert "module_name.startswith('hnsbi.')" in source
+        assert "hnsbi_package = importlib.import_module('hnsbi')" in source
+        assert "Path(hnsbi_package.__file__).resolve()" in source
+        assert "hasattr(hnsbi_package, 'Project')" in source
+
+
 def test_package_has_no_runtime_import_of_the_removed_toolkit() -> None:
     for path in (ROOT / "src").rglob("*.py"):
         source = path.read_text(encoding="utf-8")
