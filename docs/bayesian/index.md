@@ -15,6 +15,20 @@ is generative, supports alternative priors, and enables evidence, predictive,
 and selection calculations. Their normalized weights must agree in the
 population limit.
 
+The first user interface is YAML. It names the samples already drawn under
+the $\rho$, $\nu$, and $\kappa$ designs, their explicit data splits, the
+design distributions, and the five training stages:
+
+```python
+from hnsbi import Project
+
+project = Project.load("examples/dingo_bbh/dual.yaml")
+artifacts = project.train_dual()
+```
+
+JSON remains available for machine serialization of resolved configuration
+and the checksummed dual artifact manifest.
+
 For a defensive parameter proposal
 
 $$

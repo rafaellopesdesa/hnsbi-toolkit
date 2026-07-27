@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from hnsbi import Project
 from hnsbi.ratios import RatioBackendResult
@@ -8,7 +9,7 @@ from hnsbi.ratios import RatioBackendResult
 
 def _config() -> dict:
     return {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "features": ["x", "y"],
         "frequentist": {
             "reference": {
@@ -51,7 +52,7 @@ def _config() -> dict:
                 },
             },
             "ratios": {
-                "backend": "nsbi_common_utils",
+                "backend": "native",
                 "ensemble_size": 2,
                 "training": {
                     "epochs": 3,
@@ -75,7 +76,7 @@ def _config() -> dict:
                 }
             ],
             "workspace": {
-                "backend": "nsbi_common_utils",
+                "backend": "native",
                 "measurement": "measurement",
                 "channel": "SR",
                 "output_path": "artifacts/workspace.json",
@@ -184,3 +185,153 @@ def test_project_systematic_yield_override_precedes_weight_inference(tmp_path) -
         "up": "configured",
         "down": "integrated_mc_weights",
     }
+
+
+def test_project_passes_configured_scientific_splits_and_event_groups(
+    tmp_path,
+) -> None:
+    pd = pytest.importorskip("pandas")
+    config = _config()
+    config["output_dir"] = str(tmp_path / "artifacts")
+    split = np.asarray(["train", "train", "train", "validation", "holdout", "holdout"])
+    event_ids = np.arange(100, 106)
+    frame = pd.DataFrame(
+        {
+            "x": np.arange(6, dtype=np.float32),
+            "y": np.arange(6, dtype=np.float32) + 1,
+            "event_id": event_ids,
+            "split": split,
+        }
+    )
+    for sample in config["frequentist"]["samples"]:
+        sample["source"]["event_id_column"] = "event_id"
+        sample["source"]["split_column"] = "split"
+    project = Project.load(
+        config,
+        registry={
+            "reference": np.zeros((6, 2), dtype=np.float32),
+            "signal": frame,
+            "background": frame,
+        },
+    )
+    received = []
+
+    class StubBackend:
+        name = "stub"
+
+        def train_member(self, *, output_directory, **kwargs):
+            received.append(kwargs)
+            artifact = output_directory / "ratio.onnx"
+            artifact.write_bytes(b"stub")
+            return RatioBackendResult(
+                evaluator=lambda values: np.ones(len(values)),
+                files={"model": artifact},
+            )
+
+    class Reference:
+        def sample(self, count, *, rng=None):
+            return np.zeros((count, 2), dtype=np.float32)
+
+    project.train_ratios(
+        Reference(),
+        backend=StubBackend(),
+        normalization_events=12,
+    )
+
+    assert len(received) == 4
+    for call in received:
+        np.testing.assert_array_equal(call["numerator_split"], split)
+        np.testing.assert_array_equal(call["numerator_groups"], event_ids)
+        assert "denominator_split" not in call
+        assert "denominator_groups" not in call
+
+
+def test_project_keeps_correlated_systematic_rows_in_configured_groups(
+    tmp_path,
+) -> None:
+    pd = pytest.importorskip("pandas")
+    config = _config()
+    config["output_dir"] = str(tmp_path / "artifacts")
+    config["frequentist"]["parameters"].append(
+        {
+            "name": "alpha",
+            "role": "nuisance",
+            "nominal": 0.0,
+            "bounds": [-5.0, 5.0],
+            "constraint": {"kind": "normal", "mean": 0.0, "sigma": 1.0},
+        }
+    )
+    source_roles = {
+        "event_id_column": "event_id",
+        "group_column": "correlation_id",
+        "split_column": "split",
+    }
+    config["frequentist"]["samples"][0]["source"].update(source_roles)
+    config["frequentist"]["systematics"] = [
+        {
+            "name": "calibration",
+            "parameter": "alpha",
+            "type": "norm_plus_shape",
+            "variations": [
+                {
+                    "sample": "signal",
+                    "up": {
+                        "kind": "pyarrow",
+                        "registry_key": "signal_up",
+                        **source_roles,
+                    },
+                    "down": {
+                        "kind": "pyarrow",
+                        "registry_key": "signal_down",
+                        **source_roles,
+                    },
+                }
+            ],
+        }
+    ]
+    split = np.asarray(["train", "train", "train", "validation", "holdout", "holdout"])
+    groups = np.asarray(["a", "a", "b", "c", "d", "d"])
+
+    def frame(offset):
+        return pd.DataFrame(
+            {
+                "x": np.arange(6, dtype=np.float32) + offset,
+                "y": np.arange(6, dtype=np.float32),
+                "event_id": np.arange(6) + 100 * offset,
+                "correlation_id": groups,
+                "split": split,
+            }
+        )
+
+    received = []
+
+    class StubBackend:
+        name = "stub"
+
+        def train_member(self, *, output_directory, **kwargs):
+            received.append(kwargs)
+            artifact = output_directory / "ratio.onnx"
+            artifact.write_bytes(b"stub")
+            return RatioBackendResult(
+                evaluator=lambda values: np.ones(len(values)),
+                files={"model": artifact},
+            )
+
+    project = Project.load(
+        config,
+        registry={
+            "reference": np.zeros((6, 2), dtype=np.float32),
+            "background": np.zeros((6, 2), dtype=np.float32),
+            "signal": frame(0),
+            "signal_up": frame(1),
+            "signal_down": frame(2),
+        },
+    )
+    project.train_systematics(backend=StubBackend())
+
+    assert len(received) == 4
+    for call in received:
+        np.testing.assert_array_equal(call["numerator_split"], split)
+        np.testing.assert_array_equal(call["denominator_split"], split)
+        np.testing.assert_array_equal(call["numerator_groups"], groups)
+        np.testing.assert_array_equal(call["denominator_groups"], groups)

@@ -1,8 +1,8 @@
 # Training the five artifacts
 
-Users provide simulator datasets already drawn under the $\rho$, $\nu$,
-and $\kappa$ parameter designs. Separate files or explicit independent
-splits are strongly preferred.
+Users provide a YAML file whose simulator datasets were already drawn under
+the $\rho$, $\nu$, and $\kappa$ parameter designs. Separate files or explicit
+independent splits are strongly preferred.
 
 `Project.train_dual()` provides the complete native route. It materializes the
 configured Parquet/Arrow sources into `ProposalDataset` objects, preserves
@@ -21,18 +21,18 @@ behavior of `datasets.validation`.
 ```python
 from hnsbi import Project
 
-project = Project.load("examples/configs/dual_complete.json")
+project = Project.load("examples/dingo_bbh/dual.yaml")
 artifacts = project.train_dual()
 
 model = artifacts.model
 print(artifacts.manifest_path)
 ```
 
-The default conditional-density stages are quadratic-spline flows. The default
-`backend: native` ratio stages are Torch classifiers with preprocessing
-embedded in their ONNX graphs. A caller can inject established ratio backends
-for `r_p` and/or `r_c` through `ratio_backends`; the final dual graph contract
-remains the same.
+The default conditional-density stages are quadratic-spline flows. The native
+ratio stages are Torch classifiers with preprocessing embedded in their ONNX
+graphs. A caller can inject a research-specific ratio backend for `r_p` or
+`r_c` through `ratio_backends`; the final dual graph contract remains the
+same.
 
 An injected object implementing `BayesianTrainingBackend` is still accepted by
 `Project.train_dual(backend=...)` for research-specific training. That path
@@ -96,6 +96,5 @@ to the ONNX graph so validation is reproducible. Configured validation
 contexts receive independent Monte Carlo targets for checkpoint selection;
 holdout contexts receive a separate bias/RMSE report. The ratio stages
 similarly write `validation.json`, including balanced logistic loss,
-classification accuracy, and split counts. These reports are produced even
-when an injected established ratio backend manages its own internal training
-split.
+classification accuracy, and split counts. These reports are also required
+when an injected research backend manages its own internal training split.

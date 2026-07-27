@@ -221,8 +221,8 @@ class RatioStageConfig:
     normalization: str | None = None
 
     def __post_init__(self) -> None:
-        if self.backend not in {"native", "nsbi_common_utils"}:
-            raise ValueError("Ratio backend must be 'native' or 'nsbi_common_utils'.")
+        if self.backend != "native":
+            raise ValueError("Ratio backend must be 'native'.")
         if self.normalization not in {None, "conditional_reference_mean"}:
             raise ValueError(
                 "Bayesian ratio normalization must be "
@@ -1163,9 +1163,7 @@ class NativeDualBackend:
                 validation_pairs=validation_pairs,
                 opset_version=config.onnx_opset,
             )
-        from ..integrations import NsbiCommonUtilsBackend
-
-        return NsbiCommonUtilsBackend()
+        raise ValueError("Bayesian dual ratio training requires backend='native'.")
 
     def _ratio_graph(
         self,
@@ -1177,18 +1175,12 @@ class NativeDualBackend:
         directory: Path,
     ) -> tuple[Path, OnnxParityReport]:
         native = member.files.get("dual-log-ratio-onnx")
-        if native is not None:
-            graph = Path(native)
-        else:
-            graph = directory / f"member_{member_index:03d}.log_ratio.onnx"
-            _fuse_established_ratio_graph(
-                member,
-                output_path=graph,
-                n_theta=len(self.theta_features),
-                n_x=len(self.observation_features),
-                use_log_loss=config.training.use_log_loss,
-                opset_version=config.onnx_opset,
+        if native is None:
+            raise ValueError(
+                "A Bayesian ratio backend must export 'dual-log-ratio-onnx' "
+                "with physical theta/x inputs."
             )
+        graph = Path(native)
         rows = np.concatenate(
             [
                 self._ratio_parity_pairs.positive,
@@ -1858,118 +1850,6 @@ def _fit_log_normalizer_mlp(
     model.load_state_dict(best_state)
     model.eval()
     return model, history
-
-
-def _fuse_established_ratio_graph(
-    member: RatioBackendResult,
-    *,
-    output_path: Path,
-    n_theta: int,
-    n_x: int,
-    use_log_loss: bool,
-    opset_version: int,
-) -> None:
-    """Fuse upstream scaler/classifier graphs into the dual graph contract."""
-
-    onnx = require_optional(
-        "onnx",
-        extra="bayes",
-        purpose="fusing established ratio ONNX graphs",
-    )
-    scaler_path = member.files.get("scaler-onnx")
-    classifier_path = member.files.get("classifier-onnx")
-    if scaler_path is None or classifier_path is None:
-        raise ValueError(
-            "An established ratio member must expose scaler-onnx and "
-            "classifier-onnx files for portable dual inference."
-        )
-    scaler = onnx.load(str(scaler_path))
-    classifier = onnx.compose.add_prefix(onnx.load(str(classifier_path)), "classifier/")
-    scaler_input = scaler.graph.input[0].name
-    scaler_output = scaler.graph.output[0].name
-    classifier_input = classifier.graph.input[0].name
-    merged = onnx.compose.merge_models(
-        scaler,
-        classifier,
-        io_map=[(scaler_output, classifier_input)],
-    )
-    raw_output = merged.graph.output[0].name
-    del merged.graph.input[:]
-    merged.graph.input.extend(
-        [
-            onnx.helper.make_tensor_value_info(
-                "theta", onnx.TensorProto.FLOAT, ["batch", n_theta]
-            ),
-            onnx.helper.make_tensor_value_info(
-                "x", onnx.TensorProto.FLOAT, ["batch", n_x]
-            ),
-        ]
-    )
-    merged.graph.node.insert(
-        0,
-        onnx.helper.make_node("Concat", ["theta", "x"], [scaler_input], axis=1),
-    )
-    del merged.graph.output[:]
-    if use_log_loss:
-        merged.graph.node.append(
-            onnx.helper.make_node("Identity", [raw_output], ["log_ratio"])
-        )
-    else:
-        minimum = onnx.numpy_helper.from_array(
-            np.asarray(1.0e-9, dtype=np.float32), name="ratio_score_minimum"
-        )
-        maximum = onnx.numpy_helper.from_array(
-            np.asarray(
-                np.nextafter(np.float32(1.0), np.float32(0.0)),
-                dtype=np.float32,
-            ),
-            name="ratio_score_maximum",
-        )
-        one = onnx.numpy_helper.from_array(
-            np.asarray(1.0, dtype=np.float32), name="ratio_score_one"
-        )
-        merged.graph.initializer.extend([minimum, maximum, one])
-        merged.graph.node.extend(
-            [
-                onnx.helper.make_node(
-                    "Clip",
-                    [raw_output, minimum.name, maximum.name],
-                    ["clipped_score"],
-                ),
-                onnx.helper.make_node(
-                    "Sub", [one.name, "clipped_score"], ["one_minus_score"]
-                ),
-                onnx.helper.make_node("Log", ["clipped_score"], ["log_score"]),
-                onnx.helper.make_node(
-                    "Log", ["one_minus_score"], ["log_one_minus_score"]
-                ),
-                onnx.helper.make_node(
-                    "Sub",
-                    ["log_score", "log_one_minus_score"],
-                    ["log_ratio"],
-                ),
-            ]
-        )
-    merged.graph.output.extend(
-        [onnx.helper.make_tensor_value_info("log_ratio", onnx.TensorProto.FLOAT, None)]
-    )
-    for opset in merged.opset_import:
-        if not opset.domain:
-            opset.version = max(int(opset.version), int(opset_version))
-    onnx.checker.check_model(merged)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    onnx.save(merged, str(output_path))
-    write_artifact_manifest(
-        output_path.with_suffix(".onnx.manifest.json"),
-        artifact_type="dual-fused-established-log-ratio-onnx",
-        files={"onnx-model": output_path},
-        metadata={
-            "n_theta": n_theta,
-            "n_x": n_x,
-            "opset_version": opset_version,
-            "source_backend": "nsbi_common_utils",
-        },
-    )
 
 
 def train_native_dual(

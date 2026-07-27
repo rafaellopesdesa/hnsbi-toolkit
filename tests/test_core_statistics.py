@@ -214,11 +214,11 @@ def test_workspace_export_marks_formula_extension(tmp_path) -> None:
         measurement="measurement",
         poi="mu",
     )
-    assert not export.upstream_compatible
+    assert export.schema_version == "2.0"
     workspace = json.loads(export.path.read_text())
     assert workspace["hnsbi"]["sample_multipliers"]["signal"] == "mu * exp(alpha)"
     parameters = workspace["measurements"][0]["config"]["parameters"]
-    assert {item["name"]: item["inits"][0] for item in parameters} == {
+    assert {item["name"]: item["initial"] for item in parameters} == {
         "mu": 1.0,
         "alpha": 0.0,
     }
@@ -229,15 +229,14 @@ def test_workspace_export_marks_formula_extension(tmp_path) -> None:
         {"mu": 1.0, "alpha": 0.0}
     ) == pytest.approx(30.0)
 
-    with pytest.raises(ValueError, match="Unsupported formulas"):
-        write_nsbi_workspace(
-            result=result,
-            intensity=model,
-            output_dir=tmp_path / "strict",
-            measurement="measurement",
-            poi="mu",
-            require_upstream_compatible=True,
-        )
+    second = write_nsbi_workspace(
+        result=result,
+        intensity=model,
+        output_dir=tmp_path / "second",
+        measurement="measurement",
+        poi="mu",
+    )
+    assert second.workspace["hnsbi"]["backend"] == "native"
 
 
 def test_fixed_ratio_normalizer_validates_positive_means() -> None:

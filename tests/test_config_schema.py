@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+import yaml
 
 from hnsbi import Project
 from hnsbi.bayes.native_backend import NativeDualBackend
@@ -66,7 +67,7 @@ def test_complete_example_loads_through_public_api(filename: str) -> None:
 
 def test_schema_requires_a_workflow() -> None:
     value = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "features": ["x"],
     }
     errors = list(_validator().iter_errors(value))
@@ -172,10 +173,6 @@ def test_schema_rejects_unknown_or_ignored_fields(
             ),
         ),
         (
-            "frequentist_complete.json",
-            lambda value: value["frequentist"]["ratios"].update({"onnx_opset": 18}),
-        ),
-        (
             "dual_complete.json",
             lambda value: value["bayesian"].update(
                 {"validation": {"conditional_flow_c2st": True}}
@@ -234,7 +231,7 @@ def test_mapping_and_json_reject_nonfinite_numbers(tmp_path: Path) -> None:
 
     path = tmp_path / "invalid.json"
     path.write_text(
-        '{"schema_version":"1.0","features":["x"],"bayesian":NaN}',
+        '{"schema_version":"2.0","features":["x"],"bayesian":NaN}',
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match="not valid JSON"):
@@ -244,12 +241,45 @@ def test_mapping_and_json_reject_nonfinite_numbers(tmp_path: Path) -> None:
 def test_json_rejects_duplicate_object_keys(tmp_path: Path) -> None:
     path = tmp_path / "duplicate.json"
     path.write_text(
-        '{"schema_version":"1.0","schema_version":"1.0",'
+        '{"schema_version":"2.0","schema_version":"2.0",'
         '"features":["x"],"bayesian":{}}',
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match="not valid JSON"):
         ToolkitConfig.load(path)
+
+
+def test_yaml_is_the_human_interface_and_json_remains_canonical(
+    tmp_path: Path,
+) -> None:
+    value = _example("dual_complete.json")
+    authored = tmp_path / "analysis.yaml"
+    authored.write_text(yaml.safe_dump(value, sort_keys=False), encoding="utf-8")
+
+    config = ToolkitConfig.load(authored)
+    yaml_roundtrip = config.dump(tmp_path / "roundtrip.yaml")
+    json_artifact = config.dump_json(tmp_path / "runtime.json")
+
+    assert ToolkitConfig.load(yaml_roundtrip).raw == value
+    assert json.loads(json_artifact.read_text(encoding="utf-8")) == value
+    assert not json_artifact.read_text(encoding="utf-8").startswith("---")
+
+
+def test_yaml_rejects_duplicate_keys_and_nonfinite_values(tmp_path: Path) -> None:
+    duplicate = tmp_path / "duplicate.yaml"
+    duplicate.write_text(
+        "schema_version: '2.0'\nschema_version: '2.0'\nfeatures: [x]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate key"):
+        ToolkitConfig.load(duplicate)
+
+    nonfinite = tmp_path / "nonfinite.yaml"
+    value = _example("dual_complete.json")
+    value["bayesian"]["defensive_epsilon"] = float("inf")
+    nonfinite.write_text(yaml.safe_dump(value), encoding="utf-8")
+    with pytest.raises(ConfigError, match="must be finite"):
+        ToolkitConfig.load(nonfinite)
 
 
 def test_parameter_points_must_have_exact_declared_keys() -> None:

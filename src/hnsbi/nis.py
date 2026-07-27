@@ -36,27 +36,35 @@ def _integrand(
     *,
     reference_weights: np.ndarray,
     systematics: Mapping[str, Sequence[SystematicAnchor]] | None = None,
+    event_values: np.ndarray | None = None,
+    fnf_systematics: Mapping[str, Any] | None = None,
 ) -> np.ndarray:
     normalized = {
         name: np.asarray(values, dtype=np.float64) / normalizers[name]
         for name, values in raw_ratios.items()
     }
-    dummy_values = np.empty((len(reference_weights), 0), dtype=np.float64)
+    values = (
+        np.empty((len(reference_weights), 0), dtype=np.float64)
+        if event_values is None
+        else np.asarray(event_values)
+    )
     h_truth, _, _, _, _ = _evaluate_asimov_intensity(
         intensity=model,
-        values=dummy_values,
+        values=values,
         normalized_ratios=normalized,
         reference_weights=reference_weights,
         point=truth_point,
         systematics=systematics,
+        fnf_systematics=fnf_systematics,
     )
     h_point, _, _, _, _ = _evaluate_asimov_intensity(
         intensity=model,
-        values=dummy_values,
+        values=values,
         normalized_ratios=normalized,
         reference_weights=reference_weights,
         point=point,
         systematics=systematics,
+        fnf_systematics=fnf_systematics,
     )
     if np.any((h_truth > 0) & (h_point <= 0)):
         raise ValueError(
@@ -80,6 +88,8 @@ def scan_influence_amplitude(
     derivative_step: float = 1.0e-4,
     scale: float | None = None,
     systematics: Mapping[str, Sequence[SystematicAnchor]] | None = None,
+    event_values: np.ndarray | None = None,
+    fnf_systematics: Mapping[str, Any] | None = None,
 ) -> np.ndarray:
     """Influence-function target for a self-normalized likelihood scan.
 
@@ -97,6 +107,12 @@ def scan_influence_amplitude(
     length = len(next(iter(arrays.values())))
     if any(len(values) != length for values in arrays.values()):
         raise ValueError("Ratio arrays must be aligned.")
+    if event_values is not None:
+        event_values = np.asarray(event_values)
+        if event_values.ndim != 2 or len(event_values) != length:
+            raise ValueError("event_values must align with the ratio arrays.")
+    if fnf_systematics and event_values is None:
+        raise ValueError("FNF NIS influence evaluation requires event_values.")
     if reference_weights is None:
         probability = np.full(length, 1.0 / length)
     else:
@@ -131,6 +147,8 @@ def scan_influence_amplitude(
             point,
             reference_weights=probability,
             systematics=systematics,
+            event_values=event_values,
+            fnf_systematics=fnf_systematics,
         )
         integral = float(np.sum(probability * values))
         influence = values - integral
@@ -151,6 +169,8 @@ def scan_influence_amplitude(
                         point,
                         reference_weights=probability,
                         systematics=systematics,
+                        event_values=event_values,
+                        fnf_systematics=fnf_systematics,
                     )
                 )
             )
@@ -165,6 +185,8 @@ def scan_influence_amplitude(
                         point,
                         reference_weights=probability,
                         systematics=systematics,
+                        event_values=event_values,
+                        fnf_systematics=fnf_systematics,
                     )
                 )
             )
@@ -258,6 +280,7 @@ class NISDesignResult:
     training_weights: np.ndarray
     normalizer: RatioNormalizer
     systematic_anchors: dict[str, tuple[SystematicAnchor, ...]]
+    fnf_components: tuple[str, ...]
     diagnostics: dict[str, float]
 
 
@@ -276,6 +299,7 @@ class NISProposalTrainer:
             Sequence[RuntimeSystematic | SystematicAnchor],
         ]
         | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
     ) -> None:
         self.reference = reference
         self.ratios = dict(ratios)
@@ -285,6 +309,7 @@ class NISProposalTrainer:
             component: tuple(anchors)
             for component, anchors in (systematics or {}).items()
         }
+        self.fnf_systematics = dict(fnf_systematics or {})
 
     def fit(
         self,
@@ -312,6 +337,7 @@ class NISProposalTrainer:
             reference_weights=reference_weights,
             point=truth_point,
             systematics=self.systematics,
+            fnf_systematics=self.fnf_systematics,
         )
         amplitude = scan_influence_amplitude(
             self.intensity,
@@ -320,6 +346,8 @@ class NISProposalTrainer:
             design_points=design_points,
             reference_weights=reference_weights,
             systematics=systematic_anchors,
+            event_values=values,
+            fnf_systematics=self.fnf_systematics,
         )
         positive = amplitude[amplitude > 0]
         if not len(positive):
@@ -348,6 +376,7 @@ class NISProposalTrainer:
             training_weights=training_weights,
             normalizer=normalizer,
             systematic_anchors=systematic_anchors,
+            fnf_components=tuple(self.fnf_systematics),
             diagnostics=diagnostics,
         )
 
@@ -367,6 +396,7 @@ class NISAsimovBuilder:
             Sequence[RuntimeSystematic | SystematicAnchor],
         ]
         | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
     ) -> None:
         self.proposal = proposal
         self.ratios = dict(ratios)
@@ -376,6 +406,7 @@ class NISAsimovBuilder:
             component: tuple(anchors)
             for component, anchors in (systematics or {}).items()
         }
+        self.fnf_systematics = dict(fnf_systematics or {})
 
     def build(
         self,
@@ -414,6 +445,7 @@ class NISAsimovBuilder:
             reference_weights=reference_weights,
             point=point,
             systematics=self.systematics,
+            fnf_systematics=self.fnf_systematics,
         )
         event_weights = reference_weights * h
         total_weight = float(np.sum(event_weights))
@@ -439,6 +471,11 @@ class NISAsimovBuilder:
                 "ESS": effective_sample_size(event_weights),
                 "intensity_fingerprint": self.intensity.fingerprint,
                 "systematic_morphs": morph_metadata,
+                "fnf_morphs": {
+                    component: metadata
+                    for component, metadata in morph_metadata.items()
+                    if "fnf_shape_partition" in metadata
+                },
                 "auxiliary_observations": {
                     parameter.name: float(point[parameter.name])
                     for parameter in self.intensity.parameters
@@ -463,6 +500,7 @@ class NISAsimovBuilder:
             reference_weights=reference_weights,
             component_weights=component_weights,
             systematic_anchors=systematic_anchors,
+            fnf_components=tuple(self.fnf_systematics),
             auxiliary_observations={
                 parameter.name: float(point[parameter.name])
                 for parameter in self.intensity.parameters

@@ -11,6 +11,10 @@ import numpy as np
 
 from .asimov import _draw
 from .data import WeightedEvents
+from .fnf_runtime import (
+    evaluate_fnf_on_support,
+    validate_fnf_systematics,
+)
 from .intensity import IntensityModel, RatioNormalizer
 from .protocols import RatioEvaluator, Sampler
 from .systematics import RuntimeSystematic
@@ -52,6 +56,7 @@ class ToyGenerator:
             str, tuple[RuntimeSystematic, ...] | list[RuntimeSystematic]
         ]
         | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
     ) -> None:
         self.intensity = intensity
         self.features = tuple(features)
@@ -89,6 +94,14 @@ class ToyGenerator:
                 raise ValueError(
                     f"Component {component!r} repeats a systematic parameter."
                 )
+        self.fnf_systematics = validate_fnf_systematics(
+            self.intensity,
+            fnf_systematics,
+            anchor_parameters={
+                component: tuple(anchor.parameter for anchor in anchors)
+                for component, anchors in self.systematics.items()
+            },
+        )
         missing_direct = set(self.intensity.component_names).difference(
             self.component_samplers
         )
@@ -112,13 +125,16 @@ class ToyGenerator:
         ratios: Mapping[str, RatioEvaluator] | None = None,
         component_samplers: Mapping[str, Sampler] | None = None,
         systematics: Mapping[tuple[str, str], RuntimeSystematic] | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
+        fnf_device: str = "cpu",
+        onnx_providers: tuple[str, ...] | None = None,
     ) -> ToyGenerator:
         """Bind runtime models to a persisted generative workspace.
 
         Portable manifest paths and their normalizers are read from the
-        workspace. Runtime objects are explicit arguments so the caller can
-        choose native PyTorch or ONNX execution and control device/session
-        policy.
+        workspace. Up/down ratio morphs remain explicit runtime objects.
+        Declared FNFs are always loaded from their checked reference, ratio,
+        and residual manifests; explicit FNF overrides are rejected.
         """
 
         from .workspace import load_workspace_model
@@ -146,14 +162,53 @@ class ToyGenerator:
                     f"Runtime systematic {key} conflicts with workspace metadata."
                 )
             grouped.setdefault(runtime.component, []).append(runtime)
+        configured_fnf = set(model.fnf_manifests)
+        parsed_component_samplers = dict(component_samplers or {})
+        if configured_fnf:
+            if fnf_systematics is not None:
+                raise ValueError(
+                    "Explicit FNF runtime overrides are not accepted for "
+                    "workspace loading; omit fnf_systematics so the checked "
+                    "reference, ratio, and residual manifests are reconstructed."
+                )
+            if reference is not None or ratios is not None:
+                raise ValueError(
+                    "FNF workspace toys load their reference and ratios from "
+                    "the authenticated manifests; custom reference or ratio "
+                    "objects are not accepted."
+                )
+            overlapping_samplers = configured_fnf.intersection(
+                parsed_component_samplers
+            )
+            if overlapping_samplers:
+                raise ValueError(
+                    "FNF workspace toys cannot use custom nominal component "
+                    f"samplers for {sorted(overlapping_samplers)}."
+                )
+            from .fnf_runtime import load_workspace_fnf_runtime_bundle
+
+            reference, ratios, fnf_systematics = load_workspace_fnf_runtime_bundle(
+                model,
+                device=fnf_device,
+                providers=onnx_providers,
+            )
+        elif fnf_systematics is not None:
+            if fnf_systematics:
+                raise ValueError(
+                    "Explicit FNF runtime overrides are not accepted for "
+                    "workspace loading; omit fnf_systematics so the checked "
+                    "reference, ratio, and residual manifests are reconstructed."
+                )
+            fnf_systematics = {}
         return cls(
             intensity=model.intensity,
             features=model.features,
             reference=reference,
             ratios=ratios,
             normalizer=model.ratio_normalizer,
-            component_samplers=component_samplers,
+            component_samplers=parsed_component_samplers,
             systematics=grouped,
+            fnf_systematics=fnf_systematics,
         )
 
     def _draw_component(
@@ -175,7 +230,12 @@ class ToyGenerator:
                 "proposal_pool_rounds": 0,
             }
         active_systematics = self.systematics.get(name, ())
-        if name in self.component_samplers and not active_systematics:
+        active_fnf = self.fnf_systematics.get(name)
+        if (
+            name in self.component_samplers
+            and not active_systematics
+            and active_fnf is None
+        ):
             values = _draw(self.component_samplers[name], count, rng)
             if values.shape[1] != len(self.features):
                 raise ValueError(f"Component sampler {name!r} has wrong feature count.")
@@ -197,6 +257,7 @@ class ToyGenerator:
         values: np.ndarray | None = None
         probability: np.ndarray | None = None
         pool_ess = 0.0
+        fnf_partition: float | None = None
         accepted = False
         for round_index in range(int(max_pool_rounds)):
             if name in self.component_samplers:
@@ -215,6 +276,16 @@ class ToyGenerator:
                 normalized = normalized * anchor.raw_shape(
                     values, point[anchor.parameter]
                 )
+            if active_fnf is not None:
+                evaluation = evaluate_fnf_on_support(
+                    active_fnf,
+                    values=values,
+                    point=point,
+                    nominal_shape=normalized,
+                    integration_weights=np.ones(len(values), dtype=np.float64),
+                )
+                normalized = evaluation.shape_ratio
+                fnf_partition = evaluation.shape_partition
             total = float(np.sum(normalized))
             if total <= 0:
                 raise RuntimeError(f"Ratio {name!r} is zero on the proposal pool.")
@@ -244,6 +315,10 @@ class ToyGenerator:
             "proposal_pool_size": int(len(values)),
             "proposal_pool_ess": float(pool_ess),
             "proposal_pool_rounds": int(round_index + 1),
+            "fnf_shape_partition": fnf_partition,
+            "fnf_parameters": (
+                list(active_fnf.parameters) if active_fnf is not None else []
+            ),
         }
 
     def generate(
@@ -263,6 +338,8 @@ class ToyGenerator:
                 expectations[component] *= anchor.yield_factor(
                     validated_point[anchor.parameter]
                 )
+        for component, fnf in self.fnf_systematics.items():
+            expectations[component] *= float(fnf.yield_factor(validated_point))
         negative = {name: value for name, value in expectations.items() if value < 0}
         if negative:
             raise ValueError(

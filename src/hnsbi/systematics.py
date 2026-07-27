@@ -1,4 +1,4 @@
-"""Normalized up/down systematic anchors and upstream training orchestration."""
+"""Normalized up/down systematic anchors and native training orchestration."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _validate_portable_name(value: str, field: str) -> str:
 
 
 def _code4p(alpha: float, up: np.ndarray, down: np.ndarray) -> np.ndarray:
-    """HistFactory strategy-5 interpolation used by nsbi-common-utils."""
+    """Smooth HistFactory strategy-5 interpolation."""
 
     if abs(alpha) > 1.0:
         return up**alpha if alpha > 1.0 else down ** (-alpha)
@@ -527,16 +527,31 @@ class SystematicsTrainer:
         nominal_weights: Any | None = None,
         up_weights: Any | None = None,
         down_weights: Any | None = None,
+        nominal_split: Any | None = None,
+        up_split: Any | None = None,
+        down_split: Any | None = None,
+        nominal_groups: Any | None = None,
+        up_groups: Any | None = None,
+        down_groups: Any | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Train ``up/nominal`` and ``down/nominal`` using the same backend.
 
-        The backend is expected to be the nsbi-common-utils adapter, so its
-        calibration, overtraining, reweighting, and normalization diagnostics
-        remain available on each returned training result.
+        The native backend retains calibration, overtraining, reweighting, and
+        normalization diagnostics on each returned training result.
         """
 
         output_dir = Path(output_dir)
+        up_partitioning = {
+            name: value
+            for name, value in {
+                "numerator_split": up_split,
+                "denominator_split": nominal_split,
+                "numerator_groups": up_groups,
+                "denominator_groups": nominal_groups,
+            }.items()
+            if value is not None
+        }
         up_result = self.ratio_trainer.fit(
             up,
             nominal,
@@ -546,8 +561,19 @@ class SystematicsTrainer:
             denominator_weights=nominal_weights,
             numerator_name=f"{component}_{parameter}_up",
             denominator_name=f"{component}_nominal",
+            **up_partitioning,
             **kwargs,
         )
+        down_partitioning = {
+            name: value
+            for name, value in {
+                "numerator_split": down_split,
+                "denominator_split": nominal_split,
+                "numerator_groups": down_groups,
+                "denominator_groups": nominal_groups,
+            }.items()
+            if value is not None
+        }
         down_result = self.ratio_trainer.fit(
             down,
             nominal,
@@ -557,6 +583,7 @@ class SystematicsTrainer:
             denominator_weights=nominal_weights,
             numerator_name=f"{component}_{parameter}_down",
             denominator_name=f"{component}_nominal",
+            **down_partitioning,
             **kwargs,
         )
         return {"up": up_result, "down": down_result}

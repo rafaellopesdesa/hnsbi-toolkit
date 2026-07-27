@@ -30,16 +30,12 @@
 .. automodule:: hnsbi.ratios
    :members:
    :undoc-members: False
-```
 
-## nsbi-common-utils adapters
-
-```{eval-rst}
-.. automodule:: hnsbi.integrations.nsbi_common_utils
+.. automodule:: hnsbi.native_ratios
    :members:
    :undoc-members: False
 
-.. automodule:: hnsbi.integrations.nsbi_inference
+.. automodule:: hnsbi.ratio_diagnostics
    :members:
    :undoc-members: False
 ```
@@ -64,6 +60,14 @@
 
 ```{eval-rst}
 .. automodule:: hnsbi.likelihood
+   :members:
+   :undoc-members: False
+
+.. automodule:: hnsbi.inference
+   :members:
+   :undoc-members: False
+
+.. automodule:: hnsbi.multi_workspace
    :members:
    :undoc-members: False
 ```
@@ -104,6 +108,30 @@
 
 ```{eval-rst}
 .. automodule:: hnsbi.systematics
+   :members:
+   :undoc-members: False
+```
+
+## Factorizable normalizing flows
+
+```{eval-rst}
+.. automodule:: hnsbi.fnf
+   :members:
+   :undoc-members: False
+
+.. automodule:: hnsbi.fnf_runtime
+   :members:
+   :undoc-members: False
+```
+
+## Pulls, impacts, and pyhf
+
+```{eval-rst}
+.. automodule:: hnsbi.impacts
+   :members:
+   :undoc-members: False
+
+.. automodule:: hnsbi.pyhf_tools
    :members:
    :undoc-members: False
 ```

@@ -1,4 +1,4 @@
-"""JSON/dictionary configuration loading and validation."""
+"""YAML-first configuration loading with canonical JSON serialization."""
 
 from __future__ import annotations
 
@@ -30,6 +30,58 @@ def _reject_duplicate_keys(
             raise ValueError(f"Duplicate JSON object key {key!r}.")
         result[key] = value
     return result
+
+
+def _load_yaml(text: str, *, path: Path) -> Any:
+    """Load strict YAML while rejecting duplicate mapping keys.
+
+    YAML is the human-authored interface.  It is converted immediately to the
+    same ordinary Python mapping used by JSON and dictionary callers, so every
+    downstream validation and serialization rule is format-independent.
+    """
+
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ConfigError(
+            "YAML configuration requires PyYAML; reinstall hnsbi-toolkit."
+        ) from exc
+
+    class UniqueKeyLoader(yaml.SafeLoader):
+        pass
+
+    def construct_mapping(
+        loader: yaml.SafeLoader,
+        node: Any,
+        deep: bool = False,
+    ) -> dict[Any, Any]:
+        loader.flatten_mapping(node)
+        result: dict[Any, Any] = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in result
+            except TypeError as exc:
+                raise ConfigError(
+                    f"Configuration {path} contains an unhashable mapping key."
+                ) from exc
+            if duplicate:
+                raise ConfigError(
+                    f"Configuration {path} contains duplicate key {key!r}."
+                )
+            result[key] = loader.construct_object(value_node, deep=deep)
+        return result
+
+    UniqueKeyLoader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        construct_mapping,
+    )
+    try:
+        return yaml.load(text, Loader=UniqueKeyLoader)
+    except ConfigError:
+        raise
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"Configuration {path} is not valid YAML.") from exc
 
 
 def _require_finite_numbers(value: Any, path: str = "$") -> None:
@@ -79,24 +131,35 @@ def _read_mapping(source: str | Path | Mapping[str, Any]) -> dict[str, Any]:
         return deepcopy(dict(source))
     path = Path(source)
     try:
-        value = json.loads(
-            path.read_text(encoding="utf-8"),
-            parse_constant=_reject_json_constant,
-            object_pairs_hook=_reject_duplicate_keys,
-        )
+        text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ConfigError(f"Could not read configuration {path}.") from exc
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise ConfigError(f"Configuration {path} is not valid JSON.") from exc
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        value = _load_yaml(text, path=path)
+    elif path.suffix.lower() == ".json":
+        try:
+            value = json.loads(
+                text,
+                parse_constant=_reject_json_constant,
+                object_pairs_hook=_reject_duplicate_keys,
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ConfigError(f"Configuration {path} is not valid JSON.") from exc
+    else:
+        raise ConfigError(
+            f"Configuration {path} must use a .yaml, .yml, or .json extension."
+        )
     if not isinstance(value, dict):
         raise ConfigError("The top-level configuration must be an object.")
+    if not all(isinstance(key, str) for key in value):
+        raise ConfigError("Top-level configuration keys must be strings.")
     return value
 
 
 def _manual_validate(value: Mapping[str, Any]) -> None:
     version = value.get("schema_version")
-    if version != "1.0":
-        raise ConfigError(f"schema_version must be '1.0', received {version!r}.")
+    if version != "2.0":
+        raise ConfigError(f"schema_version must be '2.0', received {version!r}.")
     features = value.get("features")
     if not isinstance(features, list) or not features:
         raise ConfigError("features must be a non-empty list.")
@@ -121,6 +184,7 @@ def _manual_validate(value: Mapping[str, Any]) -> None:
                 "weight_column",
                 "event_id_column",
                 "split_column",
+                "group_column",
                 "log_density_column",
             )
             if field in specification
@@ -188,15 +252,45 @@ def _manual_validate(value: Mapping[str, Any]) -> None:
         ]
         if len(pois) != 1:
             raise ConfigError("Exactly one frequentist parameter must have role='poi'.")
+        inference = frequentist.get("inference")
+        if inference is not None:
+            if not isinstance(inference, Mapping):
+                raise ConfigError("frequentist.inference must be an object.")
+            if inference.get("poi") != pois[0]:
+                raise ConfigError(
+                    "frequentist.inference.poi must match the declared POI "
+                    f"{pois[0]!r}."
+                )
+            projection = inference.get("pyhf_projection")
+            if isinstance(projection, Mapping):
+                interval = projection.get("range")
+                if (
+                    not isinstance(interval, list)
+                    or len(interval) != 2
+                    or float(interval[0]) >= float(interval[1])
+                ):
+                    raise ConfigError(
+                        "frequentist.inference.pyhf_projection.range requires "
+                        "two increasing values."
+                    )
+                scan = projection.get("scan")
+                if (
+                    not isinstance(scan, list)
+                    or len(scan) < 2
+                    or any(
+                        float(right) <= float(left)
+                        for left, right in zip(scan, scan[1:], strict=False)
+                    )
+                ):
+                    raise ConfigError(
+                        "frequentist.inference.pyhf_projection.scan must be "
+                        "strictly increasing."
+                    )
         ratios = frequentist.get("ratios")
         if not isinstance(ratios, Mapping):
             raise ConfigError("frequentist.ratios must be an object.")
-        if ratios.get("backend") != "nsbi_common_utils":
-            raise ConfigError(
-                "The frequentist ratio backend must be "
-                "'nsbi_common_utils'; native is reserved for Bayesian "
-                "residual training."
-            )
+        if ratios.get("backend", "native") != "native":
+            raise ConfigError("The frequentist ratio backend must be 'native'.")
         if (
             ratios.get("normalization", "independent_reference_mean")
             != "independent_reference_mean"
@@ -356,6 +450,256 @@ def _manual_validate(value: Mapping[str, Any]) -> None:
                     f"Systematic {systematic.get('name')!r} references "
                     f"unknown samples {sorted(unknown_samples)}."
                 )
+        fnf = frequentist.get("fnf")
+        if fnf is not None:
+            if not isinstance(fnf, Mapping):
+                raise ConfigError("frequentist.fnf must be an object.")
+            models = fnf.get("models")
+            if not isinstance(models, list) or not models:
+                raise ConfigError("frequentist.fnf.models must be a non-empty list.")
+            parameter_entries = {
+                parameter["name"]: parameter for parameter in parameters
+            }
+            model_names: set[str] = set()
+            model_samples: set[str] = set()
+            output_paths: set[str] = set()
+            for model_index, model in enumerate(models):
+                location = f"frequentist.fnf.models[{model_index}]"
+                if not isinstance(model, Mapping):
+                    raise ConfigError(f"{location} must be an object.")
+                model_name = model.get("name")
+                if not isinstance(model_name, str) or not model_name:
+                    raise ConfigError(f"{location}.name must be a non-empty string.")
+                if model_name in model_names:
+                    raise ConfigError("FNF model names must be unique.")
+                model_names.add(model_name)
+                sample = model.get("sample")
+                if sample not in names:
+                    raise ConfigError(
+                        f"FNF model {model_name!r} references unknown sample "
+                        f"{sample!r}."
+                    )
+                if sample in model_samples:
+                    raise ConfigError(
+                        "Only one FNF model may be bound to each physics sample; "
+                        f"sample {sample!r} is repeated."
+                    )
+                model_samples.add(sample)
+                nuisance_names = model.get("nuisances")
+                if (
+                    not isinstance(nuisance_names, list)
+                    or not nuisance_names
+                    or any(
+                        not isinstance(name, str) or not name for name in nuisance_names
+                    )
+                    or len(set(nuisance_names)) != len(nuisance_names)
+                ):
+                    raise ConfigError(
+                        f"{location}.nuisances must contain unique parameter names."
+                    )
+                unknown_nuisances = set(nuisance_names).difference(declared)
+                if unknown_nuisances:
+                    raise ConfigError(
+                        f"FNF model {model_name!r} references undeclared "
+                        f"parameters {sorted(unknown_nuisances)}."
+                    )
+                non_nuisance = [
+                    name
+                    for name in nuisance_names
+                    if parameter_roles[name] != "nuisance"
+                ]
+                if non_nuisance:
+                    raise ConfigError(
+                        f"FNF model {model_name!r} parameters must have "
+                        f"role='nuisance'; found {sorted(non_nuisance)}."
+                    )
+                centers = {
+                    name: float(parameter_entries[name]["nominal"])
+                    for name in nuisance_names
+                }
+                configured_centers = model.get("centers", {})
+                configured_scales = model.get("scales", {})
+                for field, configured in (
+                    ("centers", configured_centers),
+                    ("scales", configured_scales),
+                ):
+                    if not isinstance(configured, Mapping):
+                        raise ConfigError(f"{location}.{field} must be an object.")
+                    unknown = set(configured).difference(nuisance_names)
+                    if unknown:
+                        raise ConfigError(
+                            f"{location}.{field} references parameters "
+                            f"{sorted(unknown)} outside this FNF model."
+                        )
+                    if any(
+                        isinstance(item, bool) or not isinstance(item, numbers.Real)
+                        for item in configured.values()
+                    ):
+                        raise ConfigError(f"{location}.{field} values must be numbers.")
+                if any(float(item) <= 0 for item in configured_scales.values()):
+                    raise ConfigError(f"{location}.scales values must be positive.")
+                centers.update(
+                    {name: float(item) for name, item in configured_centers.items()}
+                )
+                anchors = model.get("anchors")
+                if not isinstance(anchors, list) or not anchors:
+                    raise ConfigError(
+                        f"FNF model {model_name!r} needs at least one anchor."
+                    )
+                anchor_names: set[str] = set()
+                resolved_points: list[dict[str, float]] = []
+                for anchor_index, anchor in enumerate(anchors):
+                    anchor_location = f"{location}.anchors[{anchor_index}]"
+                    if not isinstance(anchor, Mapping):
+                        raise ConfigError(f"{anchor_location} must be an object.")
+                    anchor_name = anchor.get("name")
+                    if not isinstance(anchor_name, str) or not anchor_name:
+                        raise ConfigError(
+                            f"{anchor_location}.name must be a non-empty string."
+                        )
+                    if anchor_name in anchor_names:
+                        raise ConfigError(
+                            f"FNF model {model_name!r} anchor names must be unique."
+                        )
+                    anchor_names.add(anchor_name)
+                    point = anchor.get("point")
+                    if not isinstance(point, Mapping) or not point:
+                        raise ConfigError(
+                            f"{anchor_location}.point must be a non-empty object."
+                        )
+                    unknown = set(point).difference(nuisance_names)
+                    if unknown:
+                        raise ConfigError(
+                            f"{anchor_location}.point references parameters "
+                            f"{sorted(unknown)} outside this FNF model."
+                        )
+                    if any(
+                        isinstance(item, bool) or not isinstance(item, numbers.Real)
+                        for item in point.values()
+                    ):
+                        raise ConfigError(
+                            f"{anchor_location}.point values must be numbers."
+                        )
+                    resolved = dict(centers)
+                    resolved.update({name: float(item) for name, item in point.items()})
+                    resolved_points.append(resolved)
+                    validate_source_columns(
+                        anchor.get("source"),
+                        model_features=observation_features,
+                        location=f"{anchor_location}.source",
+                    )
+                uncovered = [
+                    name
+                    for name in nuisance_names
+                    if not any(
+                        not math.isclose(
+                            point[name],
+                            centers[name],
+                            rel_tol=0.0,
+                            abs_tol=1.0e-12,
+                        )
+                        for point in resolved_points
+                    )
+                ]
+                if uncovered:
+                    raise ConfigError(
+                        f"FNF model {model_name!r} has no non-nominal anchor "
+                        f"for parameters {uncovered}."
+                    )
+                interactions = model.get("interactions", ())
+                if not isinstance(interactions, (list, tuple)):
+                    raise ConfigError(
+                        f"{location}.interactions must be a list of pairs."
+                    )
+                canonical_interactions: set[frozenset[str]] = set()
+                for interaction in interactions:
+                    if (
+                        not isinstance(interaction, (list, tuple))
+                        or len(interaction) != 2
+                        or interaction[0] == interaction[1]
+                        or not all(
+                            isinstance(name, str) and name in nuisance_names
+                            for name in interaction
+                        )
+                    ):
+                        raise ConfigError(
+                            f"{location}.interactions entries must contain "
+                            "two distinct model nuisances."
+                        )
+                    pair = frozenset(interaction)
+                    if pair in canonical_interactions:
+                        raise ConfigError(
+                            f"FNF model {model_name!r} repeats an interaction."
+                        )
+                    canonical_interactions.add(pair)
+                    first, second = interaction
+                    if not any(
+                        not math.isclose(
+                            point[first],
+                            centers[first],
+                            rel_tol=0.0,
+                            abs_tol=1.0e-12,
+                        )
+                        and not math.isclose(
+                            point[second],
+                            centers[second],
+                            rel_tol=0.0,
+                            abs_tol=1.0e-12,
+                        )
+                        for point in resolved_points
+                    ):
+                        raise ConfigError(
+                            f"FNF interaction {(first, second)!r} requires a "
+                            "joint non-nominal anchor."
+                        )
+                yield_anchors = model.get("yield_anchors", {})
+                if not isinstance(yield_anchors, Mapping):
+                    raise ConfigError(f"{location}.yield_anchors must be an object.")
+                unknown_yields = set(yield_anchors).difference(nuisance_names)
+                if unknown_yields:
+                    raise ConfigError(
+                        f"{location}.yield_anchors references parameters "
+                        f"{sorted(unknown_yields)} outside this FNF model."
+                    )
+                for name, pair in yield_anchors.items():
+                    if (
+                        not isinstance(pair, (list, tuple))
+                        or len(pair) != 2
+                        or any(
+                            isinstance(item, bool)
+                            or not isinstance(item, numbers.Real)
+                            or float(item) <= 0
+                            for item in pair
+                        )
+                    ):
+                        raise ConfigError(
+                            f"{location}.yield_anchors.{name} must contain "
+                            "two positive relative factors."
+                        )
+                training = model.get("training", {})
+                if not isinstance(training, Mapping):
+                    raise ConfigError(f"{location}.training must be an object.")
+                if (
+                    float(training.get("validation_fraction", 0.2))
+                    + float(training.get("holdout_fraction", 0.0))
+                    >= 1.0
+                ):
+                    raise ConfigError(
+                        f"{location}.training validation_fraction and "
+                        "holdout_fraction must sum to less than one."
+                    )
+                output_path = model.get("output_path")
+                if (
+                    not isinstance(output_path, str)
+                    or not output_path.endswith(".manifest.json")
+                    or Path(output_path).name == ".manifest.json"
+                ):
+                    raise ConfigError(
+                        f"{location}.output_path must end in '.manifest.json'."
+                    )
+                if output_path in output_paths:
+                    raise ConfigError("FNF output paths must be unique.")
+                output_paths.add(output_path)
         try:
             from .intensity import IntensityModel
 
@@ -489,7 +833,7 @@ def load_config(
     *,
     validate_schema: bool = True,
 ) -> dict[str, Any]:
-    """Load a JSON file or copy a Python dictionary.
+    """Load a YAML/JSON file or copy a Python dictionary.
 
     If ``jsonschema`` is installed, the distributed schema is applied in
     addition to the dependency-free structural checks.
@@ -553,10 +897,44 @@ class ToolkitConfig:
         return None if value is None else deepcopy(dict(value))
 
     def dump(self, path: str | Path) -> Path:
+        """Write YAML for ``.yaml``/``.yml`` paths and canonical JSON otherwise."""
+
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(self.raw, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        if path.suffix.lower() in {".yaml", ".yml"}:
+            try:
+                import yaml
+            except ImportError as exc:
+                raise ConfigError(
+                    "YAML configuration requires PyYAML; reinstall hnsbi-toolkit."
+                ) from exc
+            payload = yaml.safe_dump(
+                self.raw,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
+        elif path.suffix.lower() == ".json":
+            payload = (
+                json.dumps(
+                    self.raw,
+                    allow_nan=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+        else:
+            raise ConfigError(
+                "Configuration output must use a .yaml, .yml, or .json extension."
+            )
+        path.write_text(payload, encoding="utf-8")
         return path
+
+    def dump_json(self, path: str | Path) -> Path:
+        """Serialize the validated runtime contract as canonical JSON."""
+
+        target = Path(path)
+        if target.suffix.lower() != ".json":
+            raise ConfigError("Canonical serialization paths must end in .json.")
+        return self.dump(target)

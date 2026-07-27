@@ -20,10 +20,6 @@ python -m pip install -e '.[lhc]'
 python -m pip install -e '.[bayes]'
 ```
 
-The unreleased `nsbi-common-utils` backend must be pinned to the commit used by
-the integration tests. Do not update that commit as an incidental part of
-another change.
-
 ## Checks
 
 Before opening a pull request, run:
@@ -54,16 +50,14 @@ refitting its normalizer on that validation sample. Same-support normalization
 is an intentional finite-quadrature construction for Asimov samples, but its
 exact identity must not be presented as independent surrogate validation.
 
-## Backend boundary
+## LHC implementation boundary
 
-Reuse `nsbi-common-utils` for density-ratio training, its diagnostics,
-workspace construction, and fitting. Backend imports belong in the private
-adapter. Do not copy upstream modules or expose its lowercase implementation
-classes as stable `hnsbi` APIs.
-
-If an upstream provider hook is missing, prefer a small, tested upstream
-contribution. Keep compatibility tests pinned until that contribution is
-released or intentionally updated.
+Keep ratio training, diagnostics, workspace construction, and fitting within
+the versioned `hnsbi` contracts. The package must remain installable without a
+Git checkout or a runtime dependency on `nsbi-lhc-toolkit`. When adapting an
+algorithm from another project, preserve its license notice, document the
+provenance, and add an independent regression test for the local
+implementation.
 
 ## Public interfaces and compatibility
 
@@ -79,7 +73,7 @@ released or intentionally updated.
 
 - [ ] Tests cover the new behavior and failure modes.
 - [ ] Documentation builds with warnings treated as errors.
-- [ ] Example JSON remains valid.
+- [ ] User-facing YAML and serialized JSON examples remain valid.
 - [ ] ONNX changes include native/ONNX parity tests.
 - [ ] Seeds and split provenance are recorded.
 - [ ] No generated data, model bundle, credential, or private path was added.

@@ -1,16 +1,25 @@
 # Density ratios
 
 For nominal sample $s$, train a balanced classifier between $p_s$ and the
-frozen reference $q$. With equal class normalization, optimal classifier
+frozen reference $q$. With equal class normalization, the optimal classifier
 odds estimate $r_s=p_s/q$.
 
-The `nsbi_common_utils` backend owns the classifier training and established
-diagnostics. `hnsbi-toolkit` supplies data adapters, artifact packaging, and
-the additional normalization needed by the hybrid density.
+`NativeRatioBackend` performs weighted Torch training, early stopping, and
+physical-input ONNX export. Its standardizer is fitted only on the training
+partition and embedded in the exported graph. Validation and holdout
+partitions remain distinct.
 
-## Ensembles
+When a sample source declares `split_column`, `Project.train_ratios()` honors
+the exact `train`, `validation`, and `holdout` labels. A configured
+`group_column`, or `event_id_column` when no group column is present, keeps all
+rows with the same identifier in one deterministic partition. Equal group
+identifiers are coordinated across numerator and denominator samples, and
+conflicting explicit labels fail before training. With neither option, the
+backend retains its seeded row-wise random split.
 
-The tutorial convention is the arithmetic mean of member ratios,
+## Ensembles and calibration
+
+The ensemble convention is the arithmetic mean of member ratios,
 
 $$
 \widehat r_{\rm ens}(x)
@@ -18,7 +27,11 @@ $$
 $$
 
 not the mean classifier score and not the exponential of the mean log ratio.
-The aggregation rule is recorded in the artifact manifest.
+The reduction is recorded in the artifact manifest.
+
+Optional isotonic or histogram calibration is fitted on validation scores and
+serialized as finite piecewise-linear state. Native and ONNX outputs must
+agree before a member is accepted.
 
 ## Independent normalization
 
@@ -28,23 +41,29 @@ $$
 C_s=\mathbb E_q[\widehat r_{\rm ens}(x)]
 $$
 
-on reference events not used for classifier training or member selection, and
+on reference events not used for classifier training or model selection, and
 deploy $\widetilde r_s=\widehat r_{\rm ens}/C_s$. Record the uncertainty,
-sample size, ESS, and ratio-tail summary. `Project.train_ratios()` performs
-this independent draw, stores the means, Monte Carlo standard errors, row
-count, and normalization-weight ESS in a checksummed
-`ratio_normalization.json`. Reusing the weighted Asimov sample itself for this
-validation can hide the error being measured.
+sample size, ESS, and ratio-tail summary. `Project.train_ratios()` writes the
+means, Monte Carlo standard errors, row count, and normalization-weight ESS
+to checksummed JSON.
 
-## Diagnostics delegated to the backend
+## Diagnostics
 
-- training/holdout overfit comparisons;
-- score and ratio calibration;
-- reference-to-target reweighting in all features;
-- normalization closure.
+`diagnose_ratio` produces:
 
-The adapter additionally enforces ONNX/native parity and finite probability or
-log-ratio outputs before accepting each member. `RatioEnsemble.member_ratios()`
-and `standard_deviation()` expose member agreement; `weight_summary()` and
-`ratio_normalization_report()` provide common tail and normalization summaries
-for independent validation samples.
+- weighted training and holdout loss;
+- weighted train/holdout KS checks for both classes;
+- score calibration and empirical MC log-density-ratio calibration on the
+  training and independent holdout partitions;
+- classifier-score saturation flags and ratio-tail summaries;
+- weighted AUC;
+- train/holdout reference-to-target closure for every feature;
+- $E_q[r]$ normalization and Monte Carlo uncertainty;
+- finite-output checks.
+
+The four YAML switches under `frequentist.ratios.diagnostics` independently
+enable `overtraining`, `calibration`, `reweighting`, and `normalization`.
+`RatioDiagnosticReport.write()` records the enabled checks in its strict-JSON,
+checksummed manifest and writes optional Matplotlib plots. Reusing the final
+weighted Asimov sample for these checks can hide the error being measured;
+production closure needs independent simulator data.

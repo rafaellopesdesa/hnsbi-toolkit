@@ -83,7 +83,7 @@ def _assert_workspace_closure(result, tmp_path) -> None:
         measurement="measurement",
         poi="mu",
     )
-    assert not export.upstream_compatible
+    assert export.schema_version == "2.0"
     assert export.workspace["hnsbi"]["auxiliary_observations"] == {
         "alpha": truth["alpha"]
     }

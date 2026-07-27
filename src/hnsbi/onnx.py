@@ -334,7 +334,7 @@ def convert_joblib_scaler_to_onnx(
     metadata: dict[str, Any] | None = None,
     allow_unsafe_pickle: bool = False,
 ) -> tuple[Path, Path]:
-    """Load a trusted upstream joblib scaler and export it to ONNX.
+    """Load a trusted legacy joblib scaler and export it to ONNX.
 
     Joblib artifacts are pickle programs and may execute arbitrary code while
     loading. Conversion is therefore denied by default. Set
@@ -347,9 +347,7 @@ def convert_joblib_scaler_to_onnx(
             "Refusing to load a pickle-backed joblib scaler. Pass "
             "allow_unsafe_pickle=True only for a trusted artifact."
         )
-    joblib = require_optional(
-        "joblib", extra="lhc", purpose="reading the upstream scaler"
-    )
+    joblib = require_optional("joblib", extra="lhc", purpose="reading a legacy scaler")
     scaler = joblib.load(joblib_path)
     inferred = getattr(scaler, "n_features_in_", None)
     count = n_features if n_features is not None else inferred

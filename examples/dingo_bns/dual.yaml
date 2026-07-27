@@ -1,0 +1,178 @@
+# Reduced synthetic BNS example inspired by DINGO-BNS.
+# This configuration trains hnsbi-toolkit's dual hNPE--hNDE model. It does not
+# run DINGO and it is not suitable for gravitational-wave data analysis.
+schema_version: "2.0"
+
+features:
+  - H1_f00_re
+  - H1_f00_im
+  - H1_f01_re
+  - H1_f01_im
+  - H1_f02_re
+  - H1_f02_im
+  - H1_f03_re
+  - H1_f03_im
+  - H1_f04_re
+  - H1_f04_im
+  - H1_f05_re
+  - H1_f05_im
+  - L1_f00_re
+  - L1_f00_im
+  - L1_f01_re
+  - L1_f01_im
+  - L1_f02_re
+  - L1_f02_im
+  - L1_f03_re
+  - L1_f03_im
+  - L1_f04_re
+  - L1_f04_im
+  - L1_f05_re
+  - L1_f05_im
+  - V1_f00_re
+  - V1_f00_im
+  - V1_f01_re
+  - V1_f01_im
+  - V1_f02_re
+  - V1_f02_im
+  - V1_f03_re
+  - V1_f03_im
+  - V1_f04_re
+  - V1_f04_im
+  - V1_f05_re
+  - V1_f05_im
+
+output_dir: artifacts
+
+bayesian:
+  theta_features:
+    - mass_ratio
+    - lambda_tilde
+    - phase
+    - geocent_time_s
+    - luminosity_distance_mpc
+
+  datasets:
+    rho:
+      kind: parquet
+      path: data/rho_posterior_flow.parquet
+      event_id_column: simulation_id
+      split_column: split
+      batch_size: 8192
+    rho_residual:
+      kind: parquet
+      path: data/rho_posterior_residual.parquet
+      event_id_column: simulation_id
+      split_column: split
+      batch_size: 8192
+    nu:
+      kind: parquet
+      path: data/nu_likelihood_flow.parquet
+      event_id_column: simulation_id
+      split_column: split
+      batch_size: 8192
+    kappa:
+      kind: parquet
+      path: data/kappa_likelihood_residual.parquet
+      event_id_column: simulation_id
+      split_column: split
+      batch_size: 8192
+    validation:
+      kind: parquet
+      path: data/independent_validation.parquet
+      event_id_column: simulation_id
+      batch_size: 8192
+
+  design_distributions:
+    rho: &bns_design
+      kind: box_uniform
+      low: [0.7, 0.0, -3.141592653589793, -0.01, 20.0]
+      high: [1.0, 2000.0, 3.141592653589793, 0.01, 80.0]
+    nu: *bns_design
+    kappa: *bns_design
+
+  posterior_flow:
+    architecture: quadratic_spline
+    n_coupling_layers: 6
+    hidden_features: 128
+    hidden_layers: 2
+    spline_num_bins: 8
+    spline_tail_bound: 4.0
+    dropout_probability: 0.0
+    training:
+      epochs: 60
+      batch_size: 512
+      learning_rate: 0.0003
+      validation_fraction: 0.1
+      early_stopping_patience: 10
+      seed: 20260811
+      device: auto
+    onnx_opset: 17
+
+  posterior_ratio:
+    backend: native
+    ensemble_size: 2
+    training:
+      epochs: 60
+      batch_size: 1024
+      learning_rate: 0.0003
+      hidden_layers: 3
+      neurons: 128
+      activation: swish
+      validation_fraction: 0.1
+      holdout_fraction: 0.1
+      early_stopping_patience: 10
+      seed: 20260812
+    onnx_opset: 17
+
+  likelihood_flow:
+    architecture: quadratic_spline
+    n_coupling_layers: 6
+    hidden_features: 128
+    hidden_layers: 2
+    spline_num_bins: 8
+    spline_tail_bound: 4.0
+    dropout_probability: 0.0
+    training:
+      epochs: 60
+      batch_size: 512
+      learning_rate: 0.0003
+      validation_fraction: 0.1
+      early_stopping_patience: 10
+      seed: 20260813
+      device: auto
+    onnx_opset: 17
+
+  likelihood_ratio:
+    backend: native
+    ensemble_size: 2
+    training:
+      epochs: 60
+      batch_size: 1024
+      learning_rate: 0.0003
+      hidden_layers: 3
+      neurons: 128
+      activation: swish
+      validation_fraction: 0.1
+      holdout_fraction: 0.1
+      early_stopping_patience: 10
+      seed: 20260814
+    normalization: conditional_reference_mean
+    onnx_opset: 17
+
+  normalizer:
+    reference_draws_per_context: 64
+    contexts: 512
+    hidden_features: 64
+    hidden_layers: 2
+    training:
+      epochs: 100
+      batch_size: 128
+      learning_rate: 0.001
+      validation_fraction: 0.1
+      early_stopping_patience: 12
+      seed: 20260815
+      device: auto
+    onnx_opset: 17
+
+  defensive_epsilon: 0.05
+  output_bundle: artifacts/dual_model

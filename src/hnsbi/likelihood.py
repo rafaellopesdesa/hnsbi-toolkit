@@ -11,6 +11,10 @@ from typing import Any
 import numpy as np
 
 from .artifacts import ArtifactManifest
+from .fnf_runtime import (
+    evaluate_fnf_on_support,
+    validate_fnf_systematics,
+)
 from .intensity import Component, IntensityModel, Parameter, RatioNormalizer
 from .systematics import SystematicAnchor, SystematicRatioEvaluator
 
@@ -42,6 +46,13 @@ class FitResult:
     message: str
     evaluations: int
     covariance: np.ndarray | None = None
+    parameter_names: tuple[str, ...] = ()
+    errors: Mapping[str, float] | None = None
+    correlation: np.ndarray | None = None
+    edm: float | None = None
+    valid: bool | None = None
+    parameters_at_limit: tuple[str, ...] = ()
+    backend: str = "scipy"
 
 
 @dataclass(frozen=True)
@@ -81,6 +92,8 @@ class ExtendedUnbinnedLikelihood:
         auxiliary_observations: Mapping[str, float] | None = None,
         systematics: Mapping[str, Sequence[SystematicAnchor]] | None = None,
         integration_weights: np.ndarray | None = None,
+        event_values: np.ndarray | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
     ) -> None:
         self.intensity = intensity
         selected = {
@@ -130,6 +143,20 @@ class ExtendedUnbinnedLikelihood:
                 )
             integration = integration / np.sum(integration)
         self.integration_weights = integration
+        if event_values is None:
+            parsed_event_values = None
+        else:
+            parsed_event_values = np.asarray(event_values, dtype=np.float64)
+            if (
+                parsed_event_values.ndim != 2
+                or len(parsed_event_values) != length
+                or not np.isfinite(parsed_event_values).all()
+            ):
+                raise ValueError(
+                    "event_values must be a finite two-dimensional array "
+                    "aligned with the likelihood support."
+                )
+        self.event_values = parsed_event_values
         parsed_systematics: dict[str, tuple[SystematicAnchor, ...]] = {}
         known_parameters = {parameter.name for parameter in intensity.parameters}
         for component, anchors in (systematics or {}).items():
@@ -168,6 +195,17 @@ class ExtendedUnbinnedLikelihood:
             )
             for component, anchors in self.systematics.items()
         }
+        parsed_fnf = validate_fnf_systematics(
+            intensity,
+            fnf_systematics,
+            anchor_parameters={
+                component: tuple(anchor.parameter for anchor in anchors)
+                for component, anchors in self.systematics.items()
+            },
+        )
+        if parsed_fnf and self.event_values is None:
+            raise ValueError("FNF systematics require aligned event_values.")
+        self.fnf_systematics = parsed_fnf
         parsed_constraints: dict[str, GaussianConstraint] = {}
         for name, value in (constraints or {}).items():
             if name not in {item.name for item in intensity.parameters}:
@@ -202,7 +240,9 @@ class ExtendedUnbinnedLikelihood:
     def observed_count(self) -> float:
         return float(np.sum(self.event_weights))
 
-    def nll(self, point: Mapping[str, float]) -> float:
+    def data_nll(self, point: Mapping[str, float]) -> float:
+        """Return the extended data term without auxiliary constraints."""
+
         point = self.intensity.validate_point(point)
         nominal_yields = self.intensity.component_yields(point)
         component_yields: dict[str, float] = {}
@@ -218,6 +258,20 @@ class ExtendedUnbinnedLikelihood:
                     return float("inf")
                 component_yield *= evaluation.yield_factor
                 shape = evaluation.shape_ratio
+            fnf = self.fnf_systematics.get(component)
+            if fnf is not None:
+                try:
+                    evaluation = evaluate_fnf_on_support(
+                        fnf,
+                        values=self.event_values,
+                        point=point,
+                        nominal_shape=shape,
+                        integration_weights=self.integration_weights,
+                    )
+                    shape = evaluation.shape_ratio
+                    component_yield *= evaluation.yield_factor
+                except (KeyError, ValueError, FloatingPointError, OverflowError):
+                    return float("inf")
             component_yields[component] = component_yield
             differential += component_yield * shape
         expected = float(sum(component_yields.values()))
@@ -231,20 +285,88 @@ class ExtendedUnbinnedLikelihood:
         value = expected - float(
             np.sum(self.event_weights[active] * np.log(differential[active]))
         )
-        value += sum(
-            constraint.nll(point[name]) for name, constraint in self.constraints.items()
-        )
         return float(value)
+
+    def constraint_nll(self, point: Mapping[str, float]) -> float:
+        """Return the auxiliary-observation contribution only."""
+
+        validated = self.intensity.validate_point(point)
+        return float(
+            sum(
+                constraint.nll(validated[name])
+                for name, constraint in self.constraints.items()
+            )
+        )
+
+    def nll(self, point: Mapping[str, float]) -> float:
+        """Return the full data-plus-constraint negative log likelihood."""
+
+        data = self.data_nll(point)
+        if not np.isfinite(data):
+            return float("inf")
+        return data + self.constraint_nll(point)
+
+    def with_auxiliary_observations(
+        self,
+        observations: Mapping[str, float],
+    ) -> ExtendedUnbinnedLikelihood:
+        """Clone the model with shifted global observations.
+
+        This is the primitive used by preferred impact fits. It changes only
+        the auxiliary data; every nuisance and POI remains free in the refit.
+        """
+
+        unknown = set(observations).difference(self.constraints)
+        if unknown:
+            raise ValueError(
+                f"Auxiliary observations reference unknown constraints "
+                f"{sorted(unknown)}."
+            )
+        complete = dict(self.auxiliary_observations)
+        complete.update({name: float(value) for name, value in observations.items()})
+        return ExtendedUnbinnedLikelihood(
+            intensity=self.intensity,
+            ratios=self.ratios,
+            event_weights=self.event_weights,
+            constraints={
+                name: GaussianConstraint(
+                    mean=constraint.mean,
+                    sigma=constraint.sigma,
+                )
+                for name, constraint in self.constraints.items()
+            },
+            auxiliary_observations=complete,
+            systematics=self.systematics,
+            integration_weights=self.integration_weights,
+            event_values=self.event_values,
+            fnf_systematics=self.fnf_systematics,
+        )
 
     def fit(
         self,
         *,
         initial: Mapping[str, float] | None = None,
         fixed: Mapping[str, float] | None = None,
+        backend: str = "scipy",
+        use_jax: bool = True,
         method: str = "L-BFGS-B",
         options: Mapping[str, Any] | None = None,
     ) -> FitResult:
-        """Minimize the NLL with SciPy, respecting declared parameter bounds."""
+        """Minimize the NLL with native Minuit/JAX or the SciPy fallback."""
+
+        if backend == "minuit":
+            from .inference import MinuitInference
+
+            if method != "L-BFGS-B" or options:
+                raise ValueError(
+                    "SciPy method/options cannot be combined with backend='minuit'."
+                )
+            return MinuitInference(self, use_jax=use_jax).fit(
+                initial=initial,
+                fixed=fixed,
+            )
+        if backend != "scipy":
+            raise ValueError("backend must be 'minuit' or 'scipy'.")
 
         try:
             from scipy.optimize import minimize
@@ -330,7 +452,12 @@ class ExtendedUnbinnedLikelihood:
         initial: Mapping[str, float] | None = None,
         options: Mapping[str, Any] | None = None,
     ) -> ProfileScanResult:
-        """Profile every other parameter at each fixed scan value."""
+        """Profile every other parameter at each fixed scan value.
+
+        The scan raises when the global or any fixed-point minimization fails,
+        so unsuccessful optimizer output cannot masquerade as a valid
+        likelihood-ratio point.
+        """
 
         known = {item.name for item in self.intensity.parameters}
         if parameter not in known:
@@ -346,6 +473,11 @@ class ExtendedUnbinnedLikelihood:
             if np.any((grid < low) | (grid > high)):
                 raise ValueError(f"Scan values leave declared bounds [{low}, {high}].")
         global_fit = self.fit(initial=initial, options=options)
+        if not global_fit.success or not np.isfinite(global_fit.nll):
+            raise RuntimeError(
+                "Global fit failed before profile scan: "
+                f"{global_fit.message} (NLL={global_fit.nll!r})."
+            )
         seed = dict(global_fit.point)
         fits: list[FitResult] = []
         for value in grid:
@@ -354,9 +486,13 @@ class ExtendedUnbinnedLikelihood:
                 fixed={parameter: float(value)},
                 options=options,
             )
+            if not fit.success or not np.isfinite(fit.nll):
+                raise RuntimeError(
+                    f"Profile fit failed for {parameter}={float(value)!r}: "
+                    f"{fit.message} (NLL={fit.nll!r})."
+                )
             fits.append(fit)
-            if fit.success:
-                seed.update(fit.point)
+            seed.update(fit.point)
         delta = np.asarray(
             [2.0 * (fit.nll - global_fit.nll) for fit in fits],
             dtype=np.float64,
@@ -379,12 +515,17 @@ class ExtendedUnbinnedLikelihood:
         constraints: Mapping[str, GaussianConstraint | Mapping[str, float]]
         | None = None,
         verify_artifacts: bool = True,
+        fnf_systematics: Mapping[str, Any] | None = None,
+        fnf_device: str = "cpu",
+        onnx_providers: tuple[str, ...] | None = None,
     ) -> ExtendedUnbinnedLikelihood:
-        """Load a workspace written by :func:`write_nsbi_workspace`.
+        """Load a workspace written by :func:`hnsbi.workspace.write_workspace`.
 
-        This loader covers hNSBI's formula extension. Standard
-        ``normplusshape`` interpolation and upstream-only constructs remain
-        delegated to ``nsbi-common-utils``.
+        This loader covers hNSBI formulas, Gaussian constraints, normalized
+        ``normplusshape`` interpolation, FNF morphs, and checked portable
+        arrays. FNF artifacts are bound automatically from the reference-flow
+        and ratio manifests. Explicit FNF overrides are rejected because their
+        nominal process density cannot be authenticated against the workspace.
         """
 
         workspace_path = Path(path)
@@ -416,6 +557,8 @@ class ExtendedUnbinnedLikelihood:
         embedded_constraints: dict[str, GaussianConstraint] = {}
         for entry in parameter_entries:
             bounds = entry.get("bounds")
+            if bounds is not None and len(bounds) == 1 and isinstance(bounds[0], list):
+                bounds = bounds[0]
             constraint = entry.get("hnsbi_constraint")
             if constraint is not None:
                 embedded_constraints[entry["name"]] = GaussianConstraint(
@@ -432,12 +575,13 @@ class ExtendedUnbinnedLikelihood:
                             else {}
                         ).get(
                             entry["name"],
-                            entry.get("inits", [0.0])[0],
+                            entry.get(
+                                "nominal",
+                                entry.get("initial", entry.get("inits", [0.0])[0]),
+                            ),
                         )
                     ),
-                    bounds=(
-                        tuple(map(float, bounds[0])) if bounds is not None else None
-                    ),
+                    bounds=(tuple(map(float, bounds)) if bounds is not None else None),
                     constrained=(
                         constraint is not None or entry["name"] in (constraints or {})
                     ),
@@ -658,6 +802,7 @@ class ExtendedUnbinnedLikelihood:
                 systematics[sample["name"]] = component_systematics
         if recorded_paths:
             expected_roles = {
+                "event-values",
                 "event-weights",
                 "reference-integration-weights",
                 "metadata",
@@ -705,6 +850,10 @@ class ExtendedUnbinnedLikelihood:
                 raise ValueError(
                     "Asimov auxiliary observations do not match the workspace."
                 )
+            if set(asimov_metadata.get("fnf_components", ())) != set(
+                extension.get("asimov_fnf_components", ())
+            ):
+                raise ValueError("Asimov FNF provenance does not match the workspace.")
         extension_normalizers = extension.get("ratio_normalization", {})
         if not isinstance(extension_normalizers, Mapping) or {
             component.name for component in components
@@ -726,6 +875,12 @@ class ExtendedUnbinnedLikelihood:
                     f"Ratio normalizer for {component.name!r} is inconsistent."
                 )
         weights_path = resolve_array(channels[0]["weights"], "event-weights")
+        values_payload = channels[0].get("values")
+        if values_payload is None:
+            event_values = None
+        else:
+            values_path = resolve_array(values_payload, "event-values")
+            event_values = np.load(values_path, allow_pickle=False)
         reference_weights_value = (
             extension.get("reference_weights")
             if isinstance(extension, Mapping)
@@ -768,6 +923,33 @@ class ExtendedUnbinnedLikelihood:
                 raise ValueError(
                     "Asimov array manifest row count does not match arrays."
                 )
+        configured_fnf = {
+            sample["name"]
+            for sample in channels[0].get("samples", ())
+            if isinstance(sample.get("hnsbi"), Mapping)
+            and "fnf_manifest" in sample["hnsbi"]
+        }
+        if configured_fnf != set(extension.get("fnf_components", ())):
+            raise ValueError(
+                "Workspace FNF component metadata does not match its samples."
+            )
+        if fnf_systematics is None and configured_fnf:
+            from .fnf_runtime import load_workspace_fnf_systematics
+            from .workspace import load_workspace_model
+
+            fnf_systematics = load_workspace_fnf_systematics(
+                load_workspace_model(workspace_path),
+                device=fnf_device,
+                providers=onnx_providers,
+            )
+        elif fnf_systematics is not None:
+            if configured_fnf or fnf_systematics:
+                raise ValueError(
+                    "Explicit FNF runtime overrides are not accepted for "
+                    "workspace loading; omit fnf_systematics so the checked "
+                    "reference, ratio, and residual manifests are reconstructed."
+                )
+            fnf_systematics = {}
         return cls(
             intensity=intensity,
             ratios=ratios,
@@ -776,4 +958,6 @@ class ExtendedUnbinnedLikelihood:
             auxiliary_observations=auxiliary_observations,
             systematics=systematics,
             integration_weights=integration_weights,
+            event_values=event_values,
+            fnf_systematics=fnf_systematics,
         )

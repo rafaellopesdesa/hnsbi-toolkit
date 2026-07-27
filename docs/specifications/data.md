@@ -53,7 +53,8 @@ have support appropriate for those checks.
 
 ## In-memory registration
 
-JSON cannot serialize a PyArrow or Awkward object. Use a logical key:
+YAML and JSON cannot embed a live PyArrow or Awkward object. Use a logical
+registry key:
 
 ```json
 {

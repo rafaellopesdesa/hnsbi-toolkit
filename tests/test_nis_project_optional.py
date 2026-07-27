@@ -28,7 +28,7 @@ class StandardNormal:
 def _config(tmp_path) -> dict:
     source = {"kind": "pyarrow", "registry_key": "unused"}
     return {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "features": ["x"],
         "output_dir": str(tmp_path / "artifacts"),
         "frequentist": {
@@ -62,7 +62,7 @@ def _config(tmp_path) -> dict:
                 },
             },
             "ratios": {
-                "backend": "nsbi_common_utils",
+                "backend": "native",
                 "ensemble_size": 1,
                 "training": {
                     "epochs": 2,
@@ -86,7 +86,7 @@ def _config(tmp_path) -> dict:
                 }
             ],
             "workspace": {
-                "backend": "nsbi_common_utils",
+                "backend": "native",
                 "measurement": "measurement",
                 "channel": "SR",
                 "output_path": "workspace.json",

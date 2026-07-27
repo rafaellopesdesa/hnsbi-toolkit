@@ -28,13 +28,28 @@ then fills that component either from its direct sampler or from a fresh
 reference-flow importance pool. The pool grows until a minimum ESS condition
 is met or fails explicitly; low-support pools are not silently accepted.
 
+With `fnf_systematics={"signal": fnf}`, the component Poisson mean is
+multiplied by `fnf.yield_factor(point)`. Candidate events are reweighted by
+`fnf.shape_factor(values, point)` in addition to the nominal process ratio.
+This also applies when a direct nominal component sampler is available:
+non-nominal FNF events are obtained by importance resampling that nominal
+pool. Sampling metadata records the FNF parameters and finite-pool shape
+partition.
+
 `ToyGenerator.from_workspace()` reconstructs the exact intensity formulas,
 parameter declarations, feature order, ratio normalizers, and systematic
-metadata after verifying the workspace manifests. Runtime reference/ratio
-objects remain explicit arguments, so callers can choose native or ONNX
-execution. A workspace with systematics additionally requires one matching
-`RuntimeSystematic` per `(component, parameter)`; yield morphing is applied to
-the Poisson expectation and shape morphing to the component draw.
+metadata after verifying the workspace manifests. A workspace with up/down
+systematics additionally requires one matching `RuntimeSystematic` per
+`(component, parameter)`; yield morphing is applied to the Poisson expectation
+and shape morphing to the component draw.
+
+FNF workspaces are never treated as nominal-only toys. By default
+`ToyGenerator.from_workspace()` reconstructs every FNF from the checked
+reference-flow, process-ratio, and FNF manifests, and uses that same checked
+reference and ratio stack as the toy proposal. If those dependencies are not
+serialized, loading fails. Explicit FNF overrides, custom reference/ratio
+objects, and custom nominal samplers for FNF components are rejected because
+their scientific identity cannot be authenticated against the workspace.
 
 The result should retain:
 
@@ -45,9 +60,9 @@ The result should retain:
 - Gaussian constraint observations;
 
 `ToyGenerator` only generates the pseudo-data and auxiliary observations. Run
-`ExtendedUnbinnedLikelihood.fit()` / `.profile_scan()` or the upstream
-inference adapter explicitly on the generated result when a fit or scan is
-part of the study.
+`ExtendedUnbinnedLikelihood.fit()` / `.profile_scan()` or
+`MinuitInference.test_statistic_scan()` explicitly on the generated result
+when a fit or scan is part of the study.
 
 For validation, check the Poisson count mean and variance, fitted-parameter
 closure, boundary pile-up, and the toy test-statistic distribution. A large

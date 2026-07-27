@@ -71,10 +71,10 @@ from the proposal implementation:
 
 Use `nis_prefix_convergence()` for raw-$N$ convergence and
 `compare_nis_epsilons()` for the defensive-mixture scan. For likelihood-scan
-closure, run `ExtendedUnbinnedLikelihood.profile_scan()` (or
-`NsbiCommonUtilsInference.perform_profile_scan()` for an upstream-compatible
-workspace) on deterministic prefixes and independent repeated samples; there
-is deliberately no hidden scan inside proposal training.
+closure, run `ExtendedUnbinnedLikelihood.profile_scan()` or
+`MinuitInference.profile_scan()` on deterministic prefixes and independent
+repeated samples; there is deliberately no hidden scan inside proposal
+training.
 
 Each result has `to_dict()` for strict JSON serialization: numerical NaN values
 such as an unavailable optional Pareto fit become JSON `null`. Plot helpers for

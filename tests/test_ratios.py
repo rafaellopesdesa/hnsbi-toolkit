@@ -51,6 +51,7 @@ class _RecordingBackend:
 
     def __init__(self):
         self.weight_sums = []
+        self.partitioning = []
 
     def train_member(
         self,
@@ -65,8 +66,20 @@ class _RecordingBackend:
         numerator_name,
         denominator_name,
         config,
+        numerator_split=None,
+        denominator_split=None,
+        numerator_groups=None,
+        denominator_groups=None,
     ):
         self.weight_sums.append((numerator_weights.sum(), denominator_weights.sum()))
+        self.partitioning.append(
+            {
+                "numerator_split": numerator_split,
+                "denominator_split": denominator_split,
+                "numerator_groups": numerator_groups,
+                "denominator_groups": denominator_groups,
+            }
+        )
         artifact = output_directory / "member.txt"
         artifact.write_text(str(member_index), encoding="utf-8")
         value = float(member_index + 1)
@@ -104,3 +117,44 @@ def test_ratio_trainer_delegates_and_manifests_bundle(tmp_path):
     manifest = ArtifactManifest.load(result.manifest_path)
     manifest.verify(Path(tmp_path))
     assert manifest.metadata["ensemble_reduction"] == ("arithmetic-mean-of-ratios")
+
+
+def test_ratio_trainer_forwards_aligned_split_and_group_metadata(tmp_path):
+    backend = _RecordingBackend()
+    numerator_split = np.asarray(["train", "train", "validation", "holdout", "train"])
+    numerator_groups = np.asarray([10, 10, 11, 12, 13])
+    trainer = RatioTrainer(
+        backend,
+        RatioTrainingConfig(
+            ensemble_size=1,
+            epochs=1,
+            run_diagnostics=False,
+        ),
+    )
+
+    trainer.fit(
+        np.arange(5, dtype=np.float32).reshape(-1, 1),
+        np.arange(6, dtype=np.float32).reshape(-1, 1),
+        features=("x",),
+        output_directory=tmp_path,
+        numerator_split=numerator_split,
+        numerator_groups=numerator_groups,
+    )
+
+    np.testing.assert_array_equal(
+        backend.partitioning[0]["numerator_split"],
+        numerator_split,
+    )
+    np.testing.assert_array_equal(
+        backend.partitioning[0]["numerator_groups"],
+        numerator_groups,
+    )
+    assert backend.partitioning[0]["denominator_split"] is None
+    with pytest.raises(ValueError, match="numerator_groups"):
+        trainer.fit(
+            np.arange(5, dtype=np.float32).reshape(-1, 1),
+            np.arange(6, dtype=np.float32).reshape(-1, 1),
+            features=("x",),
+            output_directory=tmp_path / "invalid",
+            numerator_groups=[1, 2],
+        )

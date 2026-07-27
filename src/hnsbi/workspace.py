@@ -1,4 +1,4 @@
-"""Export the hNSBI intensity into the nsbi-common-utils workspace contract."""
+"""Serialize the native hNSBI extended-unbinned workspace contract."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from .artifacts import ArtifactManifest
+from .artifacts import ArtifactManifest, sha256_file
 from .asimov import AsimovResult
 from .diagnostics import json_safe
 from .intensity import Component, IntensityModel, Parameter, RatioNormalizer
@@ -26,7 +26,7 @@ class WorkspaceExport:
     workspace: dict[str, Any]
     path: Path
     array_paths: Mapping[str, Path]
-    upstream_compatible: bool
+    schema_version: str
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,7 @@ class WorkspaceModel:
     ratio_normalizer: RatioNormalizer
     reference_manifest: Path | None
     ratio_manifests: Mapping[str, Path]
+    fnf_manifests: Mapping[str, Path]
     systematics: Mapping[tuple[str, str], SystematicSpecification]
     path: Path
 
@@ -46,6 +47,21 @@ def _workspace_path(path: Path, base: Path, relative: bool) -> str:
     if relative:
         return os.path.relpath(path.resolve(), start=base.resolve())
     return str(path.resolve())
+
+
+def _parameter_initial(entry: Mapping[str, Any]) -> float:
+    if "initial" in entry:
+        return float(entry["initial"])
+    legacy = entry.get("inits", [0.0])
+    return float(legacy[0])
+
+
+def _parameter_bounds(entry: Mapping[str, Any]) -> tuple[float, float] | None:
+    bounds = entry.get("bounds")
+    if bounds is None:
+        return None
+    values = bounds[0] if len(bounds) == 1 and isinstance(bounds[0], list) else bounds
+    return tuple(map(float, values))
 
 
 def _verified_manifest(
@@ -84,7 +100,7 @@ def _validated_systematic_modifier(
         )
     if value.get("type") != "normplusshape":
         raise ValueError(
-            "Only nsbi-common-utils 'normplusshape' systematic modifiers are supported."
+            "Only native 'normplusshape' systematic modifiers are supported."
         )
     data = value.get("data")
     if not isinstance(data, Mapping):
@@ -170,7 +186,7 @@ def _validated_systematic_modifier(
     return value
 
 
-def write_nsbi_workspace(
+def write_workspace(
     *,
     result: AsimovResult,
     intensity: IntensityModel,
@@ -181,17 +197,17 @@ def write_nsbi_workspace(
     systematic_modifiers: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
     reference_manifest: str | Path | None = None,
     ratio_manifests: Mapping[str, str | Path] | None = None,
+    fnf_manifests: Mapping[str, str | Path] | None = None,
     relative_paths: bool = True,
-    require_upstream_compatible: bool = False,
-    base_workspace: Mapping[str, Any] | None = None,
+    template_workspace: Mapping[str, Any] | None = None,
     workspace_filename: str = "workspace.json",
 ) -> WorkspaceExport:
-    """Write an unbinned workspace plus the ratio/weight arrays it references.
+    """Write a self-contained unbinned workspace and its checked arrays.
 
-    Products of ordinary parameter names are translated to upstream
-    ``normfactor`` modifiers. General formulas are retained under the
-    versioned ``hnsbi`` extension. They require the hNSBI formula model and
-    are never silently simplified for the upstream backend.
+    JSON is the stable runtime representation even when the project was
+    authored in YAML. General multiplier formulas and normalized systematic
+    morphs are first-class native constructs; no external workspace runtime is
+    required.
     """
 
     output_dir = Path(output_dir)
@@ -204,7 +220,7 @@ def write_nsbi_workspace(
         )
     arrays_dir = output_dir / "arrays"
     output_dir.mkdir(parents=True, exist_ok=True)
-    array_paths = result.write_nsbi_arrays(arrays_dir)
+    array_paths = result.write_workspace_arrays(arrays_dir)
     if result.systematic_anchors and systematic_modifiers:
         raise ValueError(
             "The Asimov result already contains support-bound systematics; "
@@ -269,20 +285,189 @@ def write_nsbi_workspace(
                 f"{manifest.metadata.get('numerator_name')!r}."
             )
         ratio_manifest_paths[name] = verified
+    fnf_manifest_paths = {
+        name: Path(path) for name, path in (fnf_manifests or {}).items()
+    }
+    unknown_fnf_manifests = set(fnf_manifest_paths).difference(
+        intensity.component_names
+    )
+    if unknown_fnf_manifests:
+        raise ValueError(
+            f"FNF manifests reference unknown samples {sorted(unknown_fnf_manifests)}."
+        )
+    fnf_metadata: dict[str, Mapping[str, Any]] = {}
+    fnf_centers: dict[str, dict[str, float]] = {}
+    fnf_base_dependencies: dict[str, Mapping[str, Any]] = {}
+    declared_parameters = {parameter.name for parameter in intensity.parameters}
+    for name, path in fnf_manifest_paths.items():
+        verified, manifest = _verified_manifest(
+            path,
+            expected_types={"factorizable-residual-flow"},
+        )
+        features = tuple(manifest.metadata.get("features", ()))
+        if features != tuple(result.events.features):
+            raise ValueError(
+                f"FNF manifest for {name!r} has feature order {features}, "
+                f"expected {tuple(result.events.features)}."
+            )
+        if manifest.metadata.get("component") != name:
+            raise ValueError(
+                f"FNF manifest for {name!r} is bound to component "
+                f"{manifest.metadata.get('component')!r}."
+            )
+        nuisances = tuple(manifest.metadata.get("nuisance_names", ()))
+        if (
+            not nuisances
+            or len(nuisances) != len(set(nuisances))
+            or set(nuisances).difference(declared_parameters)
+        ):
+            raise ValueError(
+                f"FNF manifest for {name!r} has invalid nuisance parameters "
+                f"{nuisances}."
+            )
+        model_records = [
+            record for record in manifest.files if record.kind == "model-config"
+        ]
+        if len(model_records) != 1:
+            raise ValueError(
+                f"FNF manifest for {name!r} must contain one model config."
+            )
+        try:
+            model_payload = json.loads(
+                (verified.parent / model_records[0].path).read_text(encoding="utf-8")
+            )
+            residual_config = model_payload["config"]
+            model_metadata = model_payload["metadata"]
+            configured_nuisances = tuple(residual_config["nuisance_names"])
+            configured_centers = tuple(residual_config["nuisance_centers"])
+            configured_scales = tuple(residual_config["nuisance_scales"])
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise ValueError(
+                f"Could not read the FNF model contract for {name!r}."
+            ) from exc
+        if (
+            configured_nuisances != nuisances
+            or len(configured_centers) != len(nuisances)
+            or len(configured_scales) != len(nuisances)
+            or not np.isfinite(configured_centers).all()
+            or not np.isfinite(configured_scales).all()
+            or np.any(np.asarray(configured_scales) <= 0)
+        ):
+            raise ValueError(f"FNF manifest and model config disagree for {name!r}.")
+        fnf_manifest_paths[name] = verified
+        fnf_metadata[name] = manifest.metadata
+        fnf_centers[name] = dict(
+            zip(nuisances, map(float, configured_centers), strict=True)
+        )
+        manifest_dependencies = manifest.metadata.get("base_density_dependencies")
+        model_dependencies = model_metadata.get("base_density_dependencies")
+        if (
+            not isinstance(manifest_dependencies, Mapping)
+            or manifest_dependencies != model_dependencies
+        ):
+            fnf_base_dependencies[name] = {}
+        else:
+            fnf_base_dependencies[name] = manifest_dependencies
+        yield_morph = manifest.metadata.get("yield_morph")
+        if isinstance(yield_morph, Mapping):
+            yield_names = tuple(yield_morph.get("nuisance_names", ()))
+            yield_centers = tuple(yield_morph.get("centers", ()))
+            yield_scales = tuple(yield_morph.get("scales", ()))
+            positions = {
+                nuisance: index for index, nuisance in enumerate(configured_nuisances)
+            }
+            if (
+                not yield_names
+                or len(yield_names) != len(set(yield_names))
+                or set(yield_names).difference(positions)
+                or len(yield_centers) != len(yield_names)
+                or len(yield_scales) != len(yield_names)
+                or any(
+                    not np.isclose(
+                        float(yield_centers[index]),
+                        float(configured_centers[positions[nuisance]]),
+                    )
+                    or not np.isclose(
+                        float(yield_scales[index]),
+                        float(configured_scales[positions[nuisance]]),
+                    )
+                    for index, nuisance in enumerate(yield_names)
+                )
+            ):
+                raise ValueError(
+                    f"FNF yield morph coordinates disagree with the residual "
+                    f"model for {name!r}."
+                )
+    missing_fnf_manifests = set(result.fnf_components).difference(fnf_manifest_paths)
+    if missing_fnf_manifests:
+        raise ValueError(
+            "The Asimov sample applied FNF components without serializing "
+            f"their manifests: {sorted(missing_fnf_manifests)}."
+        )
+    for component, centers in fnf_centers.items():
+        nonnominal = [
+            parameter
+            for parameter, center in centers.items()
+            if not np.isclose(float(result.point[parameter]), center)
+        ]
+        if nonnominal and component not in result.fnf_components:
+            raise ValueError(
+                f"Workspace component {component!r} has a non-nominal FNF "
+                f"point for {sorted(nonnominal)}, but the Asimov sample was "
+                "built without applying that FNF."
+            )
+    if fnf_manifest_paths:
+        if reference_manifest is None:
+            raise ValueError(
+                "A portable FNF workspace requires a reference-flow manifest "
+                "for its nominal process density."
+            )
+        missing_base_ratios = set(fnf_manifest_paths).difference(ratio_manifest_paths)
+        if missing_base_ratios:
+            raise ValueError(
+                "A portable FNF workspace requires native ratio manifests for "
+                f"every FNF sample; missing {sorted(missing_base_ratios)}."
+            )
+        reference_digest = sha256_file(reference_manifest)
+        for component, dependencies in fnf_base_dependencies.items():
+            if not dependencies:
+                raise ValueError(
+                    f"FNF manifest for {component!r} has no consistent "
+                    "authenticated base-density dependencies."
+                )
+            ratio_digest = sha256_file(ratio_manifest_paths[component])
+            expected_normalization = result.normalizer.means[component]
+            if dependencies.get("reference_manifest_sha256") != reference_digest:
+                raise ValueError(
+                    f"FNF {component!r} was trained with a different "
+                    "reference-flow manifest."
+                )
+            if dependencies.get("ratio_manifest_sha256") != ratio_digest:
+                raise ValueError(
+                    f"FNF {component!r} was trained with a different native "
+                    "ratio manifest."
+                )
+            if not np.isclose(
+                float(dependencies.get("ratio_normalization", np.nan)),
+                float(expected_normalization),
+                rtol=0.0,
+                atol=0.0,
+            ):
+                raise ValueError(
+                    f"FNF {component!r} was trained with a different ratio "
+                    "normalization."
+                )
     samples: list[dict[str, Any]] = []
-    upstream_compatible = True
     formulas: dict[str, str] = {}
     for component in intensity.components:
         factors = component.multiplier.simple_normfactors()
         formulas[component.name] = component.multiplier.source
         if factors is None:
-            upstream_compatible = False
             modifiers: list[dict[str, Any]] = []
         else:
             modifiers = [
                 {"name": name, "data": None, "type": "normfactor"} for name in factors
             ]
-        declared_parameters = {parameter.name for parameter in intensity.parameters}
         systematics = [
             _validated_systematic_modifier(
                 modifier,
@@ -299,13 +484,25 @@ def write_nsbi_workspace(
             raise ValueError(
                 f"Sample {component.name!r} repeats a systematic parameter."
             )
+        if component.name in fnf_metadata:
+            overlap = set(names).intersection(
+                fnf_metadata[component.name]["nuisance_names"]
+            )
+            if overlap:
+                raise ValueError(
+                    f"Sample {component.name!r} configures both an FNF and "
+                    f"anchor-ratio modifiers for parameters {sorted(overlap)}."
+                )
+            yield_morph = fnf_metadata[component.name].get("yield_morph")
+            if isinstance(yield_morph, Mapping) and not np.isclose(
+                float(yield_morph.get("nominal_yield", np.nan)),
+                component.nominal_yield,
+            ):
+                raise ValueError(
+                    f"FNF yield morph for {component.name!r} has a different "
+                    "nominal yield from the intensity model."
+                )
         modifiers.extend(systematics)
-        if systematics:
-            # The hNSBI likelihood normalizes the joint shape morph under the
-            # fixed reference quadrature at every nuisance point. The pinned
-            # upstream code4p implementation does not, so routing this model
-            # upstream would silently change its extended-rate semantics.
-            upstream_compatible = False
         samples.append(
             {
                 "name": component.name,
@@ -330,27 +527,20 @@ def write_nsbi_workspace(
                         if component.name in ratio_manifest_paths
                         else {}
                     ),
+                    **(
+                        {
+                            "fnf_manifest": _workspace_path(
+                                fnf_manifest_paths[component.name],
+                                output_dir,
+                                relative_paths,
+                            )
+                        }
+                        if component.name in fnf_manifest_paths
+                        else {}
+                    ),
                 },
             }
         )
-    constrained_offsets = {
-        parameter.name: result.point[parameter.name]
-        for parameter in intensity.parameters
-        if parameter.constrained
-        and not np.isclose(result.point[parameter.name], parameter.constraint_mean)
-    }
-    nonstandard_constraints = {
-        parameter.name: {
-            "mean": parameter.constraint_mean,
-            "sigma": parameter.constraint_sigma,
-        }
-        for parameter in intensity.parameters
-        if parameter.constrained
-        and (
-            not np.isclose(parameter.constraint_mean, 0.0)
-            or not np.isclose(parameter.constraint_sigma, 1.0)
-        )
-    }
     expected_auxiliary_observations = {
         parameter.name: float(result.point[parameter.name])
         for parameter in intensity.parameters
@@ -361,55 +551,15 @@ def write_nsbi_workspace(
             "The Asimov auxiliary observations must equal the generating "
             "values of every constrained parameter."
         )
-    if constrained_offsets or nonstandard_constraints:
-        # The upstream NLL hard-codes unit-Gaussian auxiliary observations
-        # at zero. It cannot close an Asimov generated at another constraint
-        # center without silently changing the statistical model.
-        upstream_compatible = False
-    if require_upstream_compatible and not upstream_compatible:
-        unsupported = {
-            component.name: component.multiplier.source
-            for component in intensity.components
-            if component.multiplier.simple_normfactors() is None
-        }
-        details = []
-        if unsupported:
-            details.append(f"Unsupported formulas: {unsupported}")
-        if constrained_offsets:
-            details.append(
-                f"non-nominal constrained Asimov parameters: {constrained_offsets}"
-            )
-        if nonstandard_constraints:
-            details.append(
-                f"nonstandard Gaussian constraints: {nonstandard_constraints}"
-            )
-        systematic_samples = {
-            component: [
-                modifier["name"] for modifier in modifiers_by_sample.get(component, ())
-            ]
-            for component in intensity.component_names
-            if modifiers_by_sample.get(component)
-        }
-        if systematic_samples:
-            details.append(
-                f"reference-normalized normplusshape systematics: {systematic_samples}"
-            )
-        raise ValueError(
-            "The upstream nsbi-common-utils backend cannot represent this "
-            + "; ".join(details)
-            + "."
-        )
     parameters: list[dict[str, Any]] = []
     for parameter in intensity.parameters:
         entry: dict[str, Any] = {
             "name": parameter.name,
-            # nsbi-common-utils currently uses this vector both as the fit
-            # start and to freeze the observed Asimov rate. It must therefore
-            # be the generating point, not merely a convenient optimizer seed.
-            "inits": [float(result.point[parameter.name])],
+            "initial": float(result.point[parameter.name]),
+            "nominal": float(parameter.nominal),
         }
         if parameter.bounds is not None:
-            entry["bounds"] = [[*map(float, parameter.bounds)]]
+            entry["bounds"] = [*map(float, parameter.bounds)]
         if parameter.constrained:
             entry["hnsbi_constraint"] = {
                 "kind": "normal",
@@ -422,6 +572,7 @@ def write_nsbi_workspace(
     channel_payload = {
         "name": channel,
         "type": "unbinned",
+        "values": _workspace_path(array_paths["values"], output_dir, relative_paths),
         "weights": _workspace_path(array_paths["weights"], output_dir, relative_paths),
         "samples": samples,
     }
@@ -429,19 +580,19 @@ def write_nsbi_workspace(
         "name": measurement,
         "config": {"parameters": parameters, "poi": poi},
     }
-    if base_workspace is None:
+    if template_workspace is None:
         workspace = {
             "channels": [channel_payload],
             "measurements": [measurement_payload],
-            "version": "1.0.0",
+            "version": "2.0.0",
         }
     else:
-        workspace = copy.deepcopy(dict(base_workspace))
+        workspace = copy.deepcopy(dict(template_workspace))
         base_channels = workspace.get("channels", ())
         base_measurements = workspace.get("measurements", ())
         if len(base_channels) != 1 or base_channels[0].get("name") != channel:
             raise ValueError(
-                "The configured upstream base workspace must contain exactly "
+                "The configured workspace template must contain exactly "
                 f"the channel {channel!r}."
             )
         if (
@@ -449,7 +600,7 @@ def write_nsbi_workspace(
             or base_measurements[0].get("name") != measurement
         ):
             raise ValueError(
-                "The configured upstream base workspace must contain exactly "
+                "The configured workspace template must contain exactly "
                 f"the measurement {measurement!r}."
             )
         base_sample_names = {
@@ -457,7 +608,7 @@ def write_nsbi_workspace(
         }
         if base_sample_names != set(intensity.component_names):
             raise ValueError(
-                "The upstream base workspace sample names do not match the "
+                "The workspace template sample names do not match the "
                 "hNSBI intensity components."
             )
         decorated_channel = dict(base_channels[0])
@@ -466,22 +617,10 @@ def write_nsbi_workspace(
         decorated_measurement.update(measurement_payload)
         workspace["channels"] = [decorated_channel]
         workspace["measurements"] = [decorated_measurement]
-        workspace.setdefault("version", "1.0.0")
-    nonlinear_formulas = {
-        component.name: component.multiplier.source
-        for component in intensity.components
-        if component.multiplier.simple_normfactors() is None
-    }
-    systematic_samples = {
-        component: [
-            modifier["name"] for modifier in modifiers_by_sample.get(component, ())
-        ]
-        for component in intensity.component_names
-        if modifiers_by_sample.get(component)
-    }
+        workspace["version"] = "2.0.0"
     workspace["hnsbi"] = {
-        "schema_version": "1.0",
-        "upstream_compatible": upstream_compatible,
+        "schema_version": "2.0",
+        "backend": "native",
         "sample_multipliers": formulas,
         "intensity_fingerprint": intensity.fingerprint,
         "intensity_specification": intensity.specification(),
@@ -491,6 +630,8 @@ def write_nsbi_workspace(
         "asimov_ess": result.ess,
         "auxiliary_observations": dict(result.auxiliary_observations),
         "features": list(result.events.features),
+        "fnf_components": list(fnf_manifest_paths),
+        "asimov_fnf_components": list(result.fnf_components),
         "array_manifest": _workspace_path(
             array_paths["manifest"], output_dir, relative_paths
         ),
@@ -501,13 +642,6 @@ def write_nsbi_workspace(
         ),
         "parameter_nominals": {
             parameter.name: parameter.nominal for parameter in intensity.parameters
-        },
-        "upstream_inits_are_asimov_point": True,
-        "upstream_incompatibilities": {
-            "non_nominal_constrained_parameters": constrained_offsets,
-            "nonlinear_formulas": nonlinear_formulas,
-            "nonstandard_constraints": nonstandard_constraints,
-            "reference_normalized_systematics": systematic_samples,
         },
         **(
             {
@@ -539,15 +673,21 @@ def write_nsbi_workspace(
         workspace=workspace,
         path=path,
         array_paths=array_paths,
-        upstream_compatible=upstream_compatible,
+        schema_version="2.0",
     )
+
+
+def write_nsbi_workspace(**kwargs: Any) -> WorkspaceExport:
+    """Compatibility alias for :func:`write_workspace`."""
+
+    return write_workspace(**kwargs)
 
 
 def load_workspace(path: str | Path) -> dict[str, Any]:
     with Path(path).open(encoding="utf-8") as stream:
         value = json.load(stream)
     if not isinstance(value, dict) or "channels" not in value:
-        raise ValueError("Not an hNSBI/nsbi-common-utils workspace.")
+        raise ValueError("Not an hNSBI workspace.")
     return value
 
 
@@ -575,15 +715,14 @@ def load_workspace_model(path: str | Path) -> WorkspaceModel:
     parameter_entries = measurements[0]["config"].get("parameters", [])
     parameters = []
     for entry in parameter_entries:
-        bounds = entry.get("bounds")
         nominal = extension.get("parameter_nominals", {}).get(
-            entry["name"], entry.get("inits", [0.0])[0]
+            entry["name"], entry.get("nominal", _parameter_initial(entry))
         )
         parameters.append(
             Parameter(
                 name=entry["name"],
                 nominal=float(nominal),
-                bounds=(tuple(map(float, bounds[0])) if bounds is not None else None),
+                bounds=_parameter_bounds(entry),
                 constrained="hnsbi_constraint" in entry,
                 constraint_mean=float(
                     entry.get("hnsbi_constraint", {}).get("mean", 0.0)
@@ -596,6 +735,8 @@ def load_workspace_model(path: str | Path) -> WorkspaceModel:
     components = []
     normalizers: dict[str, float] = {}
     ratio_manifests: dict[str, Path] = {}
+    fnf_manifests: dict[str, Path] = {}
+    fnf_base_dependencies: dict[str, Mapping[str, Any]] = {}
     systematics: dict[tuple[str, str], SystematicSpecification] = {}
     base = workspace_path.parent
     features = tuple(extension.get("features", ()))
@@ -634,6 +775,72 @@ def load_workspace_model(path: str | Path) -> WorkspaceModel:
                     "numerator sample."
                 )
             ratio_manifests[name] = ratio_path
+        fnf_nuisances: tuple[str, ...] = ()
+        if "fnf_manifest" in sample_extension:
+            fnf_path, fnf_manifest = _verified_manifest(
+                resolve(sample_extension["fnf_manifest"]),
+                expected_types={"factorizable-residual-flow"},
+            )
+            if tuple(fnf_manifest.metadata.get("features", ())) != features:
+                raise ValueError(
+                    f"FNF manifest for {name!r} has the wrong feature order."
+                )
+            if fnf_manifest.metadata.get("component") != name:
+                raise ValueError(
+                    f"FNF manifest for {name!r} is bound to a different physics sample."
+                )
+            fnf_nuisances = tuple(fnf_manifest.metadata.get("nuisance_names", ()))
+            declared_parameters = {parameter.name for parameter in parameters}
+            if (
+                not fnf_nuisances
+                or len(fnf_nuisances) != len(set(fnf_nuisances))
+                or set(fnf_nuisances).difference(declared_parameters)
+            ):
+                raise ValueError(
+                    f"FNF manifest for {name!r} has invalid nuisance "
+                    f"parameters {fnf_nuisances}."
+                )
+            yield_morph = fnf_manifest.metadata.get("yield_morph")
+            if isinstance(yield_morph, Mapping) and not np.isclose(
+                float(yield_morph.get("nominal_yield", np.nan)),
+                float(sample["data"][0]),
+            ):
+                raise ValueError(
+                    f"FNF yield morph for {name!r} has the wrong nominal yield."
+                )
+            model_records = [
+                record for record in fnf_manifest.files if record.kind == "model-config"
+            ]
+            if len(model_records) != 1:
+                raise ValueError(
+                    f"FNF manifest for {name!r} must contain one model config."
+                )
+            try:
+                model_payload = json.loads(
+                    (fnf_path.parent / model_records[0].path).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                model_dependencies = model_payload["metadata"].get(
+                    "base_density_dependencies"
+                )
+            except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                raise ValueError(
+                    f"Could not read the FNF model contract for {name!r}."
+                ) from exc
+            manifest_dependencies = fnf_manifest.metadata.get(
+                "base_density_dependencies"
+            )
+            if (
+                not isinstance(manifest_dependencies, Mapping)
+                or manifest_dependencies != model_dependencies
+            ):
+                raise ValueError(
+                    f"FNF manifest for {name!r} has no consistent authenticated "
+                    "base-density dependencies."
+                )
+            fnf_base_dependencies[name] = manifest_dependencies
+            fnf_manifests[name] = fnf_path
         for modifier in sample.get("modifiers", ()):
             modifier_type = modifier.get("type")
             if modifier_type == "normfactor":
@@ -711,7 +918,19 @@ def load_workspace_model(path: str | Path) -> WorkspaceModel:
             key = (name, specification.parameter)
             if key in systematics:
                 raise ValueError(f"Workspace repeats systematic {key}.")
+            if specification.parameter in fnf_nuisances:
+                raise ValueError(
+                    f"Sample {name!r} configures both an FNF and anchor-ratio "
+                    f"modifier for {specification.parameter!r}."
+                )
             systematics[key] = specification
+    if set(fnf_manifests) != set(extension.get("fnf_components", ())):
+        raise ValueError("Workspace FNF component metadata does not match its samples.")
+    asimov_fnf_components = set(extension.get("asimov_fnf_components", ()))
+    if asimov_fnf_components.difference(fnf_manifests):
+        raise ValueError(
+            "Workspace Asimov FNF provenance references an unserialized model."
+        )
     reference_manifest = (
         resolve(extension["reference_manifest"])
         if "reference_manifest" in extension
@@ -727,6 +946,39 @@ def load_workspace_model(path: str | Path) -> WorkspaceModel:
         )
         if tuple(reference_artifact.metadata.get("features", ())) != features:
             raise ValueError("Reference-flow manifest has the wrong feature order.")
+    if fnf_manifests:
+        if reference_manifest is None:
+            raise ValueError(
+                "A portable FNF workspace requires a reference-flow manifest."
+            )
+        missing_base_ratios = set(fnf_manifests).difference(ratio_manifests)
+        if missing_base_ratios:
+            raise ValueError(
+                "A portable FNF workspace is missing native ratio manifests "
+                f"for {sorted(missing_base_ratios)}."
+            )
+        reference_digest = sha256_file(reference_manifest)
+        for component, dependencies in fnf_base_dependencies.items():
+            if dependencies.get("reference_manifest_sha256") != reference_digest:
+                raise ValueError(
+                    f"FNF {component!r} is bound to a different reference-flow "
+                    "manifest."
+                )
+            if dependencies.get("ratio_manifest_sha256") != sha256_file(
+                ratio_manifests[component]
+            ):
+                raise ValueError(
+                    f"FNF {component!r} is bound to a different native ratio manifest."
+                )
+            if not np.isclose(
+                float(dependencies.get("ratio_normalization", np.nan)),
+                normalizers[component],
+                rtol=0.0,
+                atol=0.0,
+            ):
+                raise ValueError(
+                    f"FNF {component!r} is bound to a different ratio normalization."
+                )
     intensity = IntensityModel(components, parameters)
     extension_normalizers = extension.get("ratio_normalization")
     if not isinstance(extension_normalizers, Mapping) or set(
@@ -747,6 +999,7 @@ def load_workspace_model(path: str | Path) -> WorkspaceModel:
         ratio_normalizer=RatioNormalizer(normalizers),
         reference_manifest=reference_manifest,
         ratio_manifests=ratio_manifests,
+        fnf_manifests=fnf_manifests,
         systematics=systematics,
         path=workspace_path,
     )

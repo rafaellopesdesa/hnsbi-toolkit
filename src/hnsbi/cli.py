@@ -19,7 +19,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)
     validate = commands.add_parser(
-        "validate-config", help="validate and normalize a JSON configuration"
+        "validate-config",
+        help="validate a YAML or JSON configuration",
     )
     validate.add_argument("config", type=Path)
     validate.add_argument("--print", action="store_true", dest="print_config")

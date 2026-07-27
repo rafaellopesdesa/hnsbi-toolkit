@@ -5,11 +5,33 @@ artifact formats have their own explicit schema versions.
 
 ## Unreleased
 
+## 0.2.0 - 2026-07-27
+
+### Added
+
+- Native weighted density-ratio training, calibration, diagnostics, workspace
+  serialization, JAX autodifferentiation, iminuit fitting, and profile scans.
+- YAML-first frequentist and dual hNPE--hNDE configuration, while preserving
+  JSON as the serialized artifact format.
+- Multi-nuisance FNF systematic morphing, including diagnostics and portable
+  checkpoints.
+- Pulls, global-observable and covariance impacts, and pyhf asymptotic,
+  Asimov, and toy-based CLs limits.
+- A complete generated LHC analysis and two reduced, DINGO-inspired
+  gravitational-wave examples.
+
 ### Changed
 
-- The `lhc` extra now installs `nsbi-common-utils` from the canonical
-  `iris-hep/nsbi-lhc-toolkit` `main` branch; no user fork is used.
-- Colab examples now use `MyDrive/hsbi-toolkit` as their shared root and have
+- The LHC stack is self-contained and no longer has a runtime dependency on
+  `nsbi-lhc-toolkit`.
+- Portable FNF workspaces bind residuals to the exact checked reference and
+  ratio manifests used in training, auto-load that stack for toys, and reject
+  unauthenticated runtime overrides or FNF-component samplers.
+- FNF training and runtime reconstruction reject live reference or ratio
+  objects cross-bound to checked artifacts from a different training run.
+- Fixed pyhf scans must bracket the observed and all five expected CLs
+  crossings; clipped scan endpoints are never reported as limits.
+- Colab examples use `MyDrive/hsbi-toolkit` as their shared root and have
   cleared outputs for clean reruns in the new workspace.
 
 ## 0.1.0 - 2026-07-26
@@ -22,8 +44,9 @@ artifact formats have their own explicit schema versions.
 - RealNVP and rational-quadratic-spline reference flows with restartable
   checkpoints, physical-input ONNX graphs, dynamic-batch parity checks, and
   closure/C2ST/tail diagnostics.
-- Commit-pinned `nsbi-common-utils` ratio training and diagnostic delegation,
-  with every deployed classifier and scaler available through verified ONNX.
+- Density-ratio training and diagnostics delegated to a commit-pinned
+  `nsbi-common-utils` integration, with every deployed classifier and scaler
+  available through verified ONNX.
 - Direct and defensive-NIS Asimov construction with explicit ratio
   normalization, raw count, ESS, tail summaries, and checksummed workspace
   arrays.
@@ -49,7 +72,8 @@ artifact formats have their own explicit schema versions.
 
 ### Integration notes
 
-- `nsbi-common-utils` remains an optional, commit-pinned backend rather than a
-  vendored implementation.
+- This historical release used `nsbi-common-utils` as an optional,
+  commit-pinned backend. Version 0.2.0 replaces that runtime integration with
+  native implementations.
 - Learned deployment artifacts use ONNX as their portable contract; trusted
   training checkpoints may be retained only for resumption or migration.

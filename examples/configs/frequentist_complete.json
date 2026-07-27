@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "2.0",
   "features": [
     "x1",
     "x2",
@@ -64,7 +64,7 @@
       "onnx_opset": 17
     },
     "ratios": {
-      "backend": "nsbi_common_utils",
+      "backend": "native",
       "ensemble_size": 4,
       "training": {
         "epochs": 100,
@@ -112,10 +112,9 @@
       }
     ],
     "workspace": {
-      "backend": "nsbi_common_utils",
+      "backend": "native",
       "measurement": "signal_strength",
       "channel": "SR",
-      "base_config": "config_fit_nsbi.yml",
       "output_path": "artifacts/frequentist/workspace.json"
     },
     "systematics": [

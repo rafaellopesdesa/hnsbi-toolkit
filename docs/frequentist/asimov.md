@@ -39,7 +39,9 @@ supports two deliberately different normalization modes:
 normalized ratios, reference weights, parameter point, normalizer means and
 their standard errors. Its event metadata records expected yield, total
 weight, closure residual, normalization mode, and the exact intensity
-fingerprint. `write_nsbi_arrays()` checksums those arrays for workspace use.
+fingerprint. `write_workspace_arrays()` checksums those arrays for workspace
+use. `write_nsbi_arrays()` remains a compatibility alias for artifacts
+created with the earlier toolkit release.
 
 ## Nonzero systematic points
 
@@ -54,15 +56,32 @@ The resulting component shapes each integrate to one on the Asimov
 quadrature, including at intermediate nuisance values. Therefore the event
 weights close to the systematic-adjusted expected yield at the generating
 point. The support-bound anchors are retained in `AsimovResult` and
-`write_nsbi_workspace()` writes them automatically; do not supply a second
-set of workspace modifiers for such a result.
+`write_workspace()` writes them automatically; do not supply a second set of
+workspace modifiers for such a result.
 
 For constrained parameters, an Asimov result also records the auxiliary
 observation at the generating truth. The native likelihood uses that
 observation as the Gaussian constraint center, so a nonzero nuisance Asimov
-has zero constraint score at its truth. The upstream runtime fixes
-unit-Gaussian auxiliary data at zero, so these off-center workspaces are
-explicitly routed to the native likelihood.
+has zero constraint score at its truth.
+
+For a configured FNF, pass the bound runtime through
+`AsimovBuilder(fnf_systematics=...)` or
+`Project.build_configured_asimov(fnf_systematics=...)`. The nominal process
+ratio is multiplied by the exact FNF density ratio, normalized on the same
+reference quadrature, and combined with the separate positive FNF yield
+factor. This is the same finite-support calculation used by
+`ExtendedUnbinnedLikelihood`.
+
+At a non-nominal FNF point, total Asimov weight therefore closes to the
+FNF-adjusted expected yield. `AsimovResult.fnf_components`,
+`events.metadata["fnf_morphs"]`, and the workspace array metadata preserve
+that provenance. A workspace writer rejects a non-nominal FNF workspace when
+the Asimov sample was built without applying the model.
+
+`NISProposalTrainer` and `NISAsimovBuilder` accept the same
+`fnf_systematics` mapping. The scan-wide influence target includes the FNF
+shape and yield at every design point, and the final defensive-mixture
+quadrature applies the identical support normalization.
 
 Use same-support normalization when constructing a deterministic numerical
 Asimov quadrature. Use an independent fixed normalizer to assess whether the

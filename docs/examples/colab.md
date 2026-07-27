@@ -4,22 +4,22 @@ The paper workflows remain available as descriptive notebooks:
 
 | Notebook | Source exercise | Purpose |
 |---|---|---|
-| `hybrid_reference_flow_and_density_ratios.ipynb` | Exercise 5 | reference flow, ratios, diagnostics, fits, toys |
+| `hybrid_reference_flow_and_density_ratios.ipynb` | Exercise 5 | reference flow, ratios, diagnostics, workspace, and fit |
 | `neural_importance_sampling_asimov.ipynb` | Exercise 6 | defensive NIS and efficient Asimov |
 | `dual_hnpe_hnde.ipynb` | Exercise 9 | five dual artifacts and reusable calculations |
 | `sbibm_slcp_benchmark.ipynb` | Exercise 10 | SLCP benchmark |
 | `sbibm_two_moons_benchmark.ipynb` | Exercise 10 Two Moons | multimodal benchmark |
 
-The notebooks and their required `utils_*` helpers preserve the scientific
-cells developed for the paper exercises. The descriptive filenames, Colab
-badges, environment bootstrap cells, and schema-only notebook metadata were
-adapted for this repository. Outputs were cleared when the workspace moved so
-the notebooks can be rerun cleanly.
+The three Bayesian notebooks and their required `utils_*` helpers retain the
+established paper calculations. The two frequentist notebooks are compact
+native rewrites of Exercises 5 and 6. Descriptive filenames, Colab badges,
+environment bootstrap cells, and notebook metadata were adapted for this
+repository. Outputs were cleared when the workspace moved so the notebooks
+can be rerun cleanly.
 
-The frequentist setup cells install
-[`iris-hep/nsbi-lhc-toolkit@main`](https://github.com/iris-hep/nsbi-lhc-toolkit/tree/main)
-through the hNSBI `lhc` extra and import `nsbi_common_utils` as a library. They
-do not clone or import code from a fork.
+The frequentist setup cells install `hnsbi-toolkit[lhc,flows]` and use its
+self-contained native ratio, workspace, and inference stack. They do not
+clone or import another NSBI package.
 
 Each checked-in notebook displays a Google Colab badge pointing to its actual
 repository path. The setup cell installs the toolkit and preserved helper

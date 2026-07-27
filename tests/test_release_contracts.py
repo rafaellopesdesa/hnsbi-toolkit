@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 import json
-from importlib import metadata
+import runpy
 from pathlib import Path
+
+import yaml
+
+from hnsbi.config import ToolkitConfig
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised by the Python 3.10 CI job
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_DIRECTORY = ROOT / "examples" / "notebooks"
@@ -18,10 +27,11 @@ FREQUENTIST_NOTEBOOKS = (
     NOTEBOOK_DIRECTORY / "hybrid_reference_flow_and_density_ratios.ipynb",
     NOTEBOOK_DIRECTORY / "neural_importance_sampling_asimov.ipynb",
 )
-UPSTREAM_REQUIREMENT = (
-    "nsbi-common-utils @ "
-    "git+https://github.com/iris-hep/nsbi-lhc-toolkit.git@main"
-)
+YAML_ENTRYPOINTS = {
+    ROOT / "examples" / "lhc_analysis" / "analysis.yaml": "frequentist",
+    ROOT / "examples" / "dingo_bbh" / "dual.yaml": "bayesian",
+    ROOT / "examples" / "dingo_bns" / "dual.yaml": "bayesian",
+}
 
 
 def _load_notebook(path: Path) -> dict:
@@ -29,9 +39,7 @@ def _load_notebook(path: Path) -> dict:
 
 
 def _source(notebook: dict) -> str:
-    return "\n".join(
-        "".join(cell.get("source", ())) for cell in notebook["cells"]
-    )
+    return "\n".join("".join(cell.get("source", ())) for cell in notebook["cells"])
 
 
 def _markdown_source(notebook: dict) -> str:
@@ -42,9 +50,108 @@ def _markdown_source(notebook: dict) -> str:
     )
 
 
-def test_lhc_extra_tracks_the_canonical_upstream_library() -> None:
-    requirements = metadata.requires("hnsbi-toolkit") or []
-    assert any(UPSTREAM_REQUIREMENT in requirement for requirement in requirements)
+def _project_metadata() -> dict:
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+
+def _all_declared_requirements(project: dict) -> tuple[str, ...]:
+    optional = project["project"]["optional-dependencies"]
+    return (
+        *project["project"]["dependencies"],
+        *(requirement for values in optional.values() for requirement in values),
+    )
+
+
+def test_release_version_is_synchronized_across_artifacts() -> None:
+    project_version = _project_metadata()["project"]["version"]
+    module_version = runpy.run_path(ROOT / "src" / "hnsbi" / "_version.py")[
+        "__version__"
+    ]
+    citation = yaml.safe_load((ROOT / "CITATION.cff").read_text(encoding="utf-8"))
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked_project = next(
+        package for package in lock["package"] if package["name"] == "hnsbi-toolkit"
+    )
+
+    assert project_version == "0.2.0"
+    assert module_version == project_version
+    assert citation["version"] == project_version
+    assert str(citation["date-released"]) == "2026-07-27"
+    assert locked_project["version"] == project_version
+    assert locked_project["source"] == {"editable": "."}
+
+
+def test_lhc_extra_is_self_contained_and_includes_pyhf() -> None:
+    project = _project_metadata()
+    core = project["project"]["dependencies"]
+    requirements = project["project"]["optional-dependencies"]["lhc"]
+
+    assert "PyYAML>=6" in core
+    assert "numpy>=1.23" in core
+    assert "numpy>=1.23,<2" in requirements
+    assert "scipy>=1.11.4,<1.15" in requirements
+    assert any(requirement.startswith("pyhf") for requirement in requirements)
+    assert not any("nsbi-common-utils" in requirement for requirement in requirements)
+    assert not any("git+" in requirement for requirement in requirements)
+
+
+def test_adapted_code_license_notices_ship_in_the_wheel() -> None:
+    project = _project_metadata()
+    wheel_files = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+    notice = (ROOT / "NOTICE").read_text(encoding="utf-8")
+
+    assert wheel_files["NOTICE"] == "hnsbi/NOTICE"
+    assert "Permission is hereby granted, free of charge" in notice
+    assert "BSD 3-Clause License" in notice
+    assert "Copyright (c) 2026, Davide Valsecchi" in notice
+
+
+def test_lock_and_build_metadata_have_no_removed_upstream_dependency() -> None:
+    project = _project_metadata()
+    requirements = _all_declared_requirements(project)
+    forbidden = (
+        "nsbi-common-utils",
+        "nsbi_common_utils",
+        "nsbi_lhc_toolkit",
+        "nsbi-lhc-toolkit",
+    )
+    assert not any("git+" in requirement for requirement in requirements)
+    assert not any(
+        token in requirement.lower()
+        for requirement in requirements
+        for token in forbidden
+    )
+
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    assert not any(
+        package["name"] in {"nsbi-common-utils", "nsbi-lhc-toolkit"}
+        for package in lock["package"]
+    )
+    assert not any(
+        isinstance(package.get("source"), dict) and "git" in package["source"]
+        for package in lock["package"]
+    )
+
+    requirement_files = tuple((ROOT / "requirements").glob("**/*"))
+    assert not any(path.is_file() for path in requirement_files)
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "nsbi-common-utils" not in workflow
+    assert "requirements/lhc-upstream.txt" not in workflow
+    assert "tests/test_native_inference.py" in workflow
+
+
+def test_primary_frequentist_and_bayesian_interfaces_are_yaml() -> None:
+    for path, section in YAML_ENTRYPOINTS.items():
+        assert path.is_file()
+        assert path.suffix == ".yaml"
+        configuration = ToolkitConfig.load(path)
+        assert configuration.raw["schema_version"] == "2.0"
+        assert getattr(configuration, section) is not None
+
+    lhc_runner = (ROOT / "examples" / "lhc_analysis" / "run_analysis.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'with_name("analysis.yaml")' in lhc_runner
 
 
 def test_colab_notebooks_use_the_new_clean_workspace() -> None:
@@ -53,6 +160,10 @@ def test_colab_notebooks_use_the_new_clean_workspace() -> None:
         notebook = _load_notebook(path)
         source = _source(notebook)
         assert notebook["nbformat"] == 4
+        assert notebook["nbformat_minor"] >= 5
+        cell_ids = [cell.get("id") for cell in notebook["cells"]]
+        assert all(cell_ids), path
+        assert len(cell_ids) == len(set(cell_ids)), path
         assert "/content/drive/MyDrive/hsbi-toolkit" in source
         assert "Colab Notebooks/ml4hep_tifr_colab" not in source
         assert "rafaellopesdesa/nsbi-lhc-toolkit" not in source
@@ -62,12 +173,18 @@ def test_colab_notebooks_use_the_new_clean_workspace() -> None:
                 assert cell.get("outputs", []) == []
 
 
-def test_frequentist_notebooks_install_upstream_through_lhc_extra() -> None:
+def test_frequentist_notebooks_use_only_the_native_lhc_extra() -> None:
     for path in FREQUENTIST_NOTEBOOKS:
         source = _source(_load_notebook(path))
-        assert 'f"{REPO_DIR}[data,flows,lhc,plots]"' in source
-        assert "nsbi_common_utils" in source
+        assert "[lhc,flows]" in source
+        assert "nsbi_common_utils" not in source
         assert "nsbi-common-utils @" not in source
+
+
+def test_package_has_no_runtime_import_of_the_removed_toolkit() -> None:
+    for path in (ROOT / "src").rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        assert "nsbi_common_utils" not in source, path
 
 
 def test_documentation_uses_dollar_math_delimiters() -> None:

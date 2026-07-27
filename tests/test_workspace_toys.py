@@ -114,7 +114,7 @@ def test_importance_toy_records_proposal_diagnostics() -> None:
     assert diagnostic["proposal_pool_rounds"] == 1
 
 
-def test_upstream_workspace_initializes_at_asimov_generating_point(tmp_path) -> None:
+def test_native_workspace_initializes_at_asimov_generating_point(tmp_path) -> None:
     model = IntensityModel(
         [Component("signal", 3.0, "mu")],
         [Parameter("mu", 1.0, (0.0, 4.0))],
@@ -133,11 +133,13 @@ def test_upstream_workspace_initializes_at_asimov_generating_point(tmp_path) -> 
         poi="mu",
     )
     entry = export.workspace["measurements"][0]["config"]["parameters"][0]
-    assert entry["inits"] == [2.5]
+    assert entry["initial"] == 2.5
     assert export.workspace["hnsbi"]["parameter_nominals"] == {"mu": 1.0}
+    assert export.workspace["hnsbi"]["backend"] == "native"
+    assert export.schema_version == "2.0"
 
 
-def test_nonstandard_constraint_routes_away_from_upstream(tmp_path) -> None:
+def test_native_workspace_preserves_nonstandard_constraint(tmp_path) -> None:
     model = IntensityModel(
         [Component("sample", 4.0, "1")],
         [
@@ -164,7 +166,13 @@ def test_nonstandard_constraint_routes_away_from_upstream(tmp_path) -> None:
         measurement="measurement",
         poi="alpha",
     )
-    assert not export.upstream_compatible
+    assert export.schema_version == "2.0"
+    entry = export.workspace["measurements"][0]["config"]["parameters"][0]
+    assert entry["hnsbi_constraint"] == {
+        "kind": "normal",
+        "mean": 0.3,
+        "sigma": 0.7,
+    }
     likelihood = ExtendedUnbinnedLikelihood.from_workspace(export.path)
     assert likelihood.constraints["alpha"].mean == 0.3
     assert likelihood.constraints["alpha"].sigma == 0.7

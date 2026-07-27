@@ -49,7 +49,7 @@ class RatioEnsemble:
     """An arithmetic mean of independently trained density ratios.
 
     The averaging happens in ratio space, not score or log-ratio space.  This
-    preserves the ensemble convention used by ``nsbi-lhc-toolkit``.
+    preserves the arithmetic ensemble convention used by the LHC workflow.
     """
 
     members: Sequence[RatioCallable]
@@ -101,7 +101,7 @@ class RatioEnsemble:
 
 @dataclass
 class OnnxRatioMember:
-    """A portable upstream scaler-plus-classifier ratio evaluator."""
+    """A portable legacy scaler-plus-classifier ratio evaluator."""
 
     scaler_path: Path
     model_path: Path
@@ -212,6 +212,10 @@ class RatioTrainingConfig:
             raise ValueError("validation_fraction must lie in (0, 1).")
         if not 0 < self.holdout_fraction < 1:
             raise ValueError("holdout_fraction must lie in (0, 1).")
+        if self.validation_fraction + self.holdout_fraction >= 1:
+            raise ValueError(
+                "validation_fraction + holdout_fraction must be smaller than one."
+            )
         if self.num_workers < 0:
             raise ValueError("num_workers cannot be negative.")
         if self.learning_rate_factor <= 0:
@@ -248,6 +252,10 @@ class RatioTrainingBackend(Protocol):
         numerator_name: str,
         denominator_name: str,
         config: RatioTrainingConfig,
+        numerator_split: np.ndarray | None = None,
+        denominator_split: np.ndarray | None = None,
+        numerator_groups: np.ndarray | None = None,
+        denominator_groups: np.ndarray | None = None,
     ) -> RatioBackendResult:
         """Train one member and return its portable evaluator and files."""
 
@@ -285,8 +293,18 @@ class RatioTrainer:
         denominator_weights: Any | None = None,
         numerator_name: str = "numerator",
         denominator_name: str = "reference",
+        numerator_split: Any | None = None,
+        denominator_split: Any | None = None,
+        numerator_groups: Any | None = None,
+        denominator_groups: Any | None = None,
     ) -> RatioTrainingResult:
-        """Fit every member and checksum the complete ratio bundle."""
+        """Fit every member and checksum the complete ratio bundle.
+
+        Explicit split labels must be ``train``, ``validation``, or
+        ``holdout``. Group identifiers keep correlated rows in one partition;
+        the native backend coordinates equal group identifiers across the two
+        classes.
+        """
 
         feature_names = tuple(features)
         if not feature_names or len(set(feature_names)) != len(feature_names):
@@ -313,6 +331,35 @@ class RatioTrainer:
             raise ValueError(
                 "denominator_weights must contain one value per denominator event."
             )
+
+        def aligned_optional(values: Any | None, *, rows: int, name: str):
+            if values is None:
+                return None
+            array = np.asarray(values).reshape(-1)
+            if len(array) != rows:
+                raise ValueError(f"{name} must contain one value per event.")
+            return array
+
+        numerator_split_values = aligned_optional(
+            numerator_split,
+            rows=len(numerator),
+            name="numerator_split",
+        )
+        denominator_split_values = aligned_optional(
+            denominator_split,
+            rows=len(denominator),
+            name="denominator_split",
+        )
+        numerator_group_values = aligned_optional(
+            numerator_groups,
+            rows=len(numerator),
+            name="numerator_groups",
+        )
+        denominator_group_values = aligned_optional(
+            denominator_groups,
+            rows=len(denominator),
+            name="denominator_groups",
+        )
         numerator_normalized = normalize_class_weights(numerator_raw_weights)
         denominator_normalized = normalize_class_weights(denominator_raw_weights)
         directory = Path(output_directory)
@@ -321,6 +368,16 @@ class RatioTrainer:
         for member_index in range(self.config.ensemble_size):
             member_directory = directory / f"member_{member_index:03d}"
             member_directory.mkdir(parents=True, exist_ok=True)
+            optional_partitioning = {
+                key: value
+                for key, value in {
+                    "numerator_split": numerator_split_values,
+                    "denominator_split": denominator_split_values,
+                    "numerator_groups": numerator_group_values,
+                    "denominator_groups": denominator_group_values,
+                }.items()
+                if value is not None
+            }
             result = self.backend.train_member(
                 numerator_values=numerator,
                 denominator_values=denominator,
@@ -332,6 +389,7 @@ class RatioTrainer:
                 numerator_name=numerator_name,
                 denominator_name=denominator_name,
                 config=self.config,
+                **optional_partitioning,
             )
             if not result.files:
                 raise RuntimeError(
@@ -354,6 +412,12 @@ class RatioTrainer:
                 "ensemble_reduction": "arithmetic-mean-of-ratios",
                 "features": list(feature_names),
                 "numerator_name": numerator_name,
+                "partitioning": {
+                    "denominator_groups": denominator_group_values is not None,
+                    "denominator_split": denominator_split_values is not None,
+                    "numerator_groups": numerator_group_values is not None,
+                    "numerator_split": numerator_split_values is not None,
+                },
                 "weight_normalization": "independent-unit-sum",
             },
         )

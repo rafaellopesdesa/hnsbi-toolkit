@@ -1,69 +1,73 @@
 # Workspaces, fits, and scans
 
-The `nsbi_common_utils` backend supplies its pyhf-like workspace builder,
-JAX statistical model, and iminuit fit/scan interface. `hnsbi-toolkit` adds a
-namespaced extension that identifies portable reference and ratio bundles,
-feature signatures, normalization constants, and sample multiplier
-expressions.
+`Project.write_configured_workspace()` writes a native, self-contained JSON
+workspace. JSON is the stable runtime representation even when the analysis
+was authored in YAML.
 
-The integration does not copy the upstream serializer. When
-`frequentist.workspace.base_config` is configured,
-`Project.write_configured_workspace()` invokes the upstream
-`WorkspaceBuilder` and then decorates its result. The base workspace must
-contain exactly the configured channel and measurement, and its sample-name
-set must match the hNSBI intensity. The decorator preserves unrelated
-top-level metadata, replaces that channel and measurement with verified
-unbinned arrays/modifiers, and adds the `hnsbi` extension.
+The workspace records:
 
-When no `base_config` is supplied, the same method writes a minimal one-channel
-workspace skeleton directly. In either case the integration:
+- observation and reference-quadrature arrays with checksums;
+- one normalized component ratio per physics sample;
+- restricted multiplier formulas such as `mu` or `mu * exp(alpha)`;
+- parameter roles, initial and nominal values, bounds, and Gaussian
+  constraints;
+- optional normalized shape/rate systematic anchors;
+- relative references to flow, ratio, FNF, and array manifests.
 
-1. validates a configured or existing upstream workspace;
-2. resolves artifact bundle paths relative to the workspace;
-3. translates simple multiplicative expressions into upstream norm-factor
-   modifiers where possible;
-4. uses the hNSBI intensity evaluator when a valid expression cannot be
-   represented by the current upstream model;
-5. delegates minimization and profile scans to the backend when the resulting
-   workspace is semantically compatible.
-
-## Multiplier expressions
-
-Expressions such as `mu`, `mu * exp(alpha)`, or `1` use a restricted grammar.
 Python `eval`, attribute access, indexing, imports, and arbitrary callables are
-not accepted from JSON. Parameter names must be declared, and every component
-multiplier is checked for finite, nonnegative values at runtime.
+not accepted. Every component multiplier is checked for finite,
+nonnegative values at runtime.
 
-## Portable paths
+## Native likelihood
 
-Workspace JSON stores the pre-evaluated `.npy` arrays required by the upstream
-runtime and, in the namespaced `hnsbi` extension, optional relative paths to
-the reference and ratio bundle manifests. A workspace and its artifact
-directory can therefore move together and still pass checksum and
-feature-order verification.
+`load_workspace_model()` verifies the schema, paths, manifests, feature order,
+intensity fingerprint, and array semantics. `ExtendedUnbinnedLikelihood`
+separates the event NLL from Gaussian constraint terms and can replace
+auxiliary observations without changing the nominal model metadata.
 
-`NsbiCommonUtilsInference.from_workspace()` resolves all upstream array paths
-relative to the workspace file before constructing the upstream JAX model and
-iminuit engine. Its `perform_fit()` and `profile_scan()` methods delegate
-directly to `nsbi-common-utils`. General multiplier formulas use
-`ExtendedUnbinnedLikelihood`; they are never silently approximated as an
-upstream norm-factor product.
+```python
+from hnsbi import Project
+from hnsbi.workspace import load_workspace_model
 
-The backend currently has restrictions on nonlinear parameterization and
-cross-channel sample structure. See the dedicated backend caveats before
-interpreting a successful serialization as model validation.
+model = load_workspace_model("artifacts/workspace.json")
+project = Project.load("analysis.yaml")
+likelihood = project.workspace_runtime("artifacts/workspace.json")
+```
 
-`hnsbi.upstream_compatible` is false for general formulas, nonstandard or
-off-center Gaussian constraints, and normalized shape-systematic workspaces.
-`Project.workspace_runtime()` routes those cases to the toolkit's
-`ExtendedUnbinnedLikelihood`; compatible models use
-`NsbiCommonUtilsInference`. The workspace's intensity fingerprint and all
-array/model manifests are rechecked before evaluation.
+For every declared FNF, the runtime reconstructs the nominal process density
+from the checked reference-flow and ratio manifests and binds the residual
+automatically. A portable FNF workspace cannot be written without those
+nominal-density manifests. Missing dependencies fail explicitly, and injected
+`fnf_systematics` overrides are rejected because their base density cannot be
+authenticated against the serialized model.
+The workspace also records whether its Asimov arrays were generated with each
+FNF; a non-nominal FNF point cannot be serialized from nominal-only weights.
 
-When an Asimov is generated away from a constrained nuisance's nominal
-constraint mean, `hnsbi.auxiliary_observations` records the auxiliary
-measurement at the generating truth. The native likelihood loads it as the
-Gaussian constraint center while retaining the model's nominal constraint
-metadata and intensity fingerprint. This makes the full event-plus-constraint
-score close at the truth; the upstream runtime is not used because it cannot
-represent that auxiliary observation.
+## JAX and iminuit
+
+`JaxLikelihood` implements the same formula and systematic interpolation in
+JAX and exposes values, gradients, and Hessians. `MinuitInference` minimizes
+the NLL with MIGRAD, runs HESSE, and returns named values, uncertainties,
+covariance, correlation, EDM, and parameters at their bounds.
+
+```python
+from hnsbi.inference import MinuitInference
+
+inference = MinuitInference(likelihood, use_jax=True)
+fit = inference.fit()
+profile = inference.profile_scan("mu", [0.0, 0.5, 1.0, 1.5, 2.0])
+test = inference.test_statistic_scan("mu", [0.0, 0.5, 1.0, 1.5, 2.0])
+```
+
+The objective is the NLL, so iminuit uses `errordef=0.5`. The
+test-statistic scan reports the one-sided profiled statistic relative to the
+global fit. Profile and test-statistic scans raise `RuntimeError` if the
+global fit or any fixed-point fit is unsuccessful or has a non-finite NLL;
+failed minimizations are never converted into finite-looking scan points.
+
+## Several workspaces
+
+`CombinedLikelihood` sums independent channel likelihoods. Parameters with
+the same name are shared, and each shared Gaussian constraint is counted once.
+Each channel retains its own observation, reference support, ratio
+normalization, and optional FNF or up/down systematic model.

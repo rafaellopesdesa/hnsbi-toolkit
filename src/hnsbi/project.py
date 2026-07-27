@@ -67,8 +67,24 @@ class NISWorkflowArtifacts:
     onnx_parity: Mapping[str, Any]
 
 
+@dataclass(frozen=True)
+class FNFModelArtifacts:
+    """One fitted or loaded sample-specific factorizable flow bundle."""
+
+    name: str
+    sample: str
+    residual: Any
+    artifact: Any
+    yield_morph: Any | None = None
+    training: Any | None = None
+
+    @property
+    def manifest_path(self) -> Path:
+        return self.artifact.manifest_path
+
+
 class Project:
-    """A validated JSON/dictionary project with explicit runtime objects.
+    """A validated YAML/JSON/dictionary project with explicit runtime objects.
 
     Configuration controls reproducible defaults and artifact locations.
     In-memory PyArrow/Awkward/pandas objects are supplied through ``registry``
@@ -111,9 +127,16 @@ class Project:
         value = self.config.output_dir
         return value if value.is_absolute() else self.base_directory / value
 
-    def _resolve_path(self, value: str | Path) -> Path:
+    def resolve_path(self, value: str | Path) -> Path:
+        """Resolve an analysis-relative path from the project configuration."""
+
         path = Path(value)
         return path if path.is_absolute() else self.base_directory / path
+
+    def _resolve_path(self, value: str | Path) -> Path:
+        """Backward-compatible private alias for :meth:`resolve_path`."""
+
+        return self.resolve_path(value)
 
     def _frequentist(self) -> dict[str, Any]:
         value = self.config.frequentist
@@ -166,6 +189,7 @@ class Project:
                 value
                 for value in (
                     spec.get("split_column"),
+                    spec.get("group_column"),
                     spec.get("log_density_column"),
                 )
                 if value is not None
@@ -189,6 +213,609 @@ class Project:
             sample["name"]: self.data_source(sample["source"])
             for sample in self._frequentist()["samples"]
         }
+
+    @staticmethod
+    def _ratio_partition_metadata(
+        specification: Mapping[str, Any],
+        batch: Any,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """Return configured scientific splits and correlated-event groups."""
+
+        split_column = specification.get("split_column")
+        split = (
+            None if split_column is None else np.asarray(batch.columns[split_column])
+        )
+        group_column = specification.get("group_column")
+        if group_column is not None:
+            groups = np.asarray(batch.columns[group_column])
+        elif specification.get("event_id_column") is not None:
+            groups = np.asarray(batch.row_ids)
+        else:
+            # DataSource generates positional row IDs when none were declared.
+            # Those IDs must not accidentally correlate unrelated samples.
+            groups = None
+        return split, groups
+
+    def fnf_model_specifications(self) -> tuple[dict[str, Any], ...]:
+        """Return the validated sample-specific FNF model specifications."""
+
+        section = self._frequentist().get("fnf")
+        if section is None:
+            return ()
+        return tuple(dict(model) for model in section["models"])
+
+    def _fnf_model_specification(self, name: str) -> dict[str, Any]:
+        matches = [
+            model for model in self.fnf_model_specifications() if model["name"] == name
+        ]
+        if not matches:
+            raise KeyError(f"Unknown FNF model {name!r}.")
+        return matches[0]
+
+    @staticmethod
+    def _resolve_device(device: str) -> str:
+        if device != "auto":
+            return device
+        try:
+            import torch
+        except ImportError:
+            return "cpu"
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
+    def fnf_configs(self, name: str) -> tuple[Any, Any]:
+        """Translate one YAML FNF model to residual and training configs."""
+
+        from .fnf import FNFResidualConfig, FNFTrainingConfig
+
+        model = self._fnf_model_specification(name)
+        nuisance_names = tuple(model["nuisances"])
+        parameters = {
+            parameter["name"]: parameter
+            for parameter in self._frequentist()["parameters"]
+        }
+        centers = {
+            nuisance: float(parameters[nuisance]["nominal"])
+            for nuisance in nuisance_names
+        }
+        centers.update(
+            {
+                nuisance: float(value)
+                for nuisance, value in model.get("centers", {}).items()
+            }
+        )
+        scales = {}
+        for nuisance in nuisance_names:
+            constraint = parameters[nuisance].get("constraint")
+            scales[nuisance] = (
+                float(constraint["sigma"]) if isinstance(constraint, Mapping) else 1.0
+            )
+        scales.update(
+            {
+                nuisance: float(value)
+                for nuisance, value in model.get("scales", {}).items()
+            }
+        )
+        architecture = model.get("architecture", {})
+        training = model.get("training", {})
+        residual_config = FNFResidualConfig(
+            n_features=len(self.config.features),
+            nuisance_names=nuisance_names,
+            num_layers=int(architecture.get("num_layers", 2)),
+            hidden_features=tuple(architecture.get("hidden_features", (64, 64))),
+            interactions=tuple(tuple(pair) for pair in model.get("interactions", ())),
+            nuisance_centers=tuple(centers[nuisance] for nuisance in nuisance_names),
+            nuisance_scales=tuple(scales[nuisance] for nuisance in nuisance_names),
+            quadratic_scale=float(architecture.get("quadratic_scale", 1.0)),
+            interaction_scale=float(architecture.get("interaction_scale", 1.0)),
+            log_scale_clip=float(architecture.get("log_scale_clip", 2.0)),
+            shift_clip=(
+                None
+                if architecture.get("shift_clip") is None
+                else float(architecture["shift_clip"])
+            ),
+        )
+        training_config = FNFTrainingConfig(
+            epochs=int(training.get("epochs", 100)),
+            batch_size=int(training.get("batch_size", 1024)),
+            learning_rate=float(training.get("learning_rate", 1.0e-4)),
+            weight_decay=float(training.get("weight_decay", 1.0e-5)),
+            validation_fraction=float(training.get("validation_fraction", 0.2)),
+            holdout_fraction=float(training.get("holdout_fraction", 0.0)),
+            patience=int(training.get("early_stopping_patience", 20)),
+            min_delta=float(training.get("min_delta", 1.0e-5)),
+            gradient_clip_norm=(
+                None
+                if training.get("gradient_clip_norm", 5.0) is None
+                else float(training.get("gradient_clip_norm", 5.0))
+            ),
+            steps_per_epoch=(
+                None
+                if training.get("steps_per_epoch") is None
+                else int(training["steps_per_epoch"])
+            ),
+            device=self._resolve_device(str(training.get("device", "cpu"))),
+        )
+        return residual_config, training_config
+
+    def fnf_anchors(
+        self,
+        name: str,
+        *,
+        max_events_per_anchor: int | None = None,
+    ) -> tuple[Any, ...]:
+        """Materialize the YAML anchor samples for one FNF model."""
+
+        from .fnf import FNFAnchor
+
+        model = self._fnf_model_specification(name)
+        configured_limit = model.get("training", {}).get("max_events_per_anchor")
+        limit = (
+            configured_limit if max_events_per_anchor is None else max_events_per_anchor
+        )
+        result = []
+        for anchor in model["anchors"]:
+            source_specification = anchor["source"]
+            batch = self.data_source(source_specification).materialize(
+                batch_size=int(source_specification.get("batch_size", 65_536)),
+                max_events=None if limit is None else int(limit),
+            )
+            if not len(batch.values):
+                raise ValueError(f"FNF anchor {name!r}/{anchor['name']!r} is empty.")
+            group_column = source_specification.get("group_column")
+            if group_column is not None:
+                groups = batch.columns[group_column]
+            elif source_specification.get("event_id_column") is not None:
+                groups = batch.row_ids
+            else:
+                groups = None
+            result.append(
+                FNFAnchor(
+                    values=batch.values,
+                    point=dict(anchor["point"]),
+                    weights=batch.weights,
+                    groups=groups,
+                    name=anchor["name"],
+                )
+            )
+        return tuple(result)
+
+    def _fnf_yield_morph(self, model: Mapping[str, Any], config: Any) -> Any | None:
+        anchors = model.get("yield_anchors", {})
+        if not anchors:
+            return None
+        from .fnf import LogQuadraticYieldMorph
+
+        samples = {sample["name"]: sample for sample in self._frequentist()["samples"]}
+        nominal_yield = float(samples[model["sample"]]["nominal_yield"])
+        absolute = {
+            nuisance: tuple(nominal_yield * float(factor) for factor in factors)
+            for nuisance, factors in anchors.items()
+        }
+        centers = dict(
+            zip(
+                config.nuisance_names,
+                config.nuisance_centers,
+                strict=True,
+            )
+        )
+        scales = dict(
+            zip(
+                config.nuisance_names,
+                config.nuisance_scales,
+                strict=True,
+            )
+        )
+        return LogQuadraticYieldMorph.from_anchors(
+            nominal_yield,
+            absolute,
+            centers=centers,
+            scales=scales,
+        )
+
+    @staticmethod
+    def _fnf_artifact_target(path: Path) -> tuple[Path, str]:
+        suffix = ".manifest.json"
+        if not path.name.endswith(suffix) or path.name == suffix:
+            raise ValueError("An FNF artifact path must end in '.manifest.json'.")
+        return path.parent, path.name[: -len(suffix)]
+
+    def train_fnf_systematics(
+        self,
+        *,
+        base_torch_log_probs: Mapping[str, Any] | None = None,
+        reference: Any | None = None,
+        ratios: RatioSetTrainingArtifacts | None = None,
+        reference_manifest: str | Path | None = None,
+        max_events_per_anchor: int | None = None,
+        seed: int | None = None,
+    ) -> dict[str, FNFModelArtifacts]:
+        """Train and save every YAML-configured sample-specific FNF model.
+
+        Callers may provide explicit ``base_torch_log_probs``. The normal
+        project workflow instead supplies the trained reference flow and
+        :class:`RatioSetTrainingArtifacts`; the toolkit composes each
+        normalized nominal process density automatically and binds the FNF
+        artifact to the exact reference and ratio manifests.
+        """
+
+        from .artifacts import sha256_file
+        from .fnf import FNFTrainer
+        from .fnf_runtime import (
+            NativeProcessDensity,
+            load_verified_reference_density,
+        )
+        from .native_ratios import load_native_ratio_torch_ensemble
+
+        specifications = self.fnf_model_specifications()
+        base_densities: dict[str, NativeProcessDensity] | None = None
+        reference_manifest_path: Path | None = None
+        authenticated_normalizer: RatioNormalizer | None = None
+        if base_torch_log_probs is None:
+            if reference is None or ratios is None:
+                raise ValueError(
+                    "FNF training requires either base_torch_log_probs or both "
+                    "the trained reference flow and ratio artifacts."
+                )
+            if reference_manifest is None:
+                raise ValueError(
+                    "Project FNF training with a native nominal density requires "
+                    "the reference-flow manifest so the residual can be bound "
+                    "to a portable scientific model."
+                )
+            reference_manifest_path = Path(reference_manifest)
+            if not reference_manifest_path.is_file():
+                raise FileNotFoundError(reference_manifest_path)
+            expected_normalizer_manifest = ratios.normalizer_path.with_suffix(
+                ratios.normalizer_path.suffix + ".manifest.json"
+            )
+            if (
+                expected_normalizer_manifest.resolve()
+                != Path(ratios.normalizer_manifest).resolve()
+            ):
+                raise ValueError(
+                    "Ratio artifacts do not bind their declared normalizer manifest."
+                )
+            authenticated_normalizer = RatioNormalizer.load(ratios.normalizer_path)
+            if (
+                authenticated_normalizer.means != ratios.normalizer.means
+                or authenticated_normalizer.standard_errors
+                != ratios.normalizer.standard_errors
+                or authenticated_normalizer.metadata != ratios.normalizer.metadata
+            ):
+                raise ValueError(
+                    "The live ratio normalizer disagrees with its checked artifact."
+                )
+            authenticated_reference = load_verified_reference_density(
+                reference_manifest_path,
+                features=tuple(self.config.features),
+                live_density=reference,
+            )
+            required_samples = {model["sample"] for model in specifications}
+            missing_ratios = required_samples.difference(ratios.training)
+            if missing_ratios:
+                raise KeyError(
+                    "Missing nominal ratio artifacts for FNF samples "
+                    f"{sorted(missing_ratios)}."
+                )
+            authenticated_ratios = {
+                sample: load_native_ratio_torch_ensemble(
+                    ratios.training[sample].manifest_path,
+                    expected_features=tuple(self.config.features),
+                    live_ensemble=ratios.evaluators[sample],
+                )
+                for sample in required_samples
+            }
+            base_densities = {
+                model["sample"]: NativeProcessDensity(
+                    reference_density=authenticated_reference,
+                    ratio=authenticated_ratios[model["sample"]],
+                    ratio_normalization=authenticated_normalizer.means[model["sample"]],
+                )
+                for model in specifications
+            }
+            base_torch_log_probs = {
+                sample: density.torch_log_prob
+                for sample, density in base_densities.items()
+            }
+        missing = {
+            model["sample"]
+            for model in specifications
+            if model["sample"] not in base_torch_log_probs
+        }
+        if missing:
+            raise KeyError(
+                "Missing nominal Torch log densities for FNF samples "
+                f"{sorted(missing)}."
+            )
+        result: dict[str, FNFModelArtifacts] = {}
+        for model in specifications:
+            residual_config, training_config = self.fnf_configs(model["name"])
+            if base_densities is not None:
+                base_densities[model["sample"]].to(training_config.device)
+            training_seed = int(
+                model.get("training", {}).get("seed", 0) if seed is None else seed
+            )
+            training = FNFTrainer(
+                residual_config,
+                training_config,
+            ).fit(
+                self.fnf_anchors(
+                    model["name"],
+                    max_events_per_anchor=max_events_per_anchor,
+                ),
+                base_torch_log_prob=base_torch_log_probs[model["sample"]],
+                features=self.config.features,
+                seed=training_seed,
+            )
+            yield_morph = self._fnf_yield_morph(model, residual_config)
+            base_dependencies = None
+            if base_densities is not None:
+                assert reference_manifest_path is not None
+                assert authenticated_normalizer is not None
+                ratio_manifest = Path(ratios.training[model["sample"]].manifest_path)
+                base_dependencies = {
+                    "reference_manifest_sha256": sha256_file(reference_manifest_path),
+                    "ratio_manifest_sha256": sha256_file(ratio_manifest),
+                    "ratio_normalization": float(
+                        authenticated_normalizer.means[model["sample"]]
+                    ),
+                }
+            target = self._resolve_path(model["output_path"])
+            directory, prefix = self._fnf_artifact_target(target)
+            artifact = training.save(
+                directory,
+                prefix=prefix,
+                metadata={
+                    "component": model["sample"],
+                    "features": list(self.config.features),
+                    "model_name": model["name"],
+                    "nuisance_names": list(residual_config.nuisance_names),
+                    **(
+                        {"base_density_dependencies": base_dependencies}
+                        if base_dependencies is not None
+                        else {}
+                    ),
+                    **(
+                        {"yield_morph": yield_morph.to_dict()}
+                        if yield_morph is not None
+                        else {}
+                    ),
+                },
+            )
+            if artifact.manifest_path.resolve() != target.resolve():
+                raise RuntimeError(
+                    "The saved FNF artifact did not match its configured path."
+                )
+            result[model["sample"]] = FNFModelArtifacts(
+                name=model["name"],
+                sample=model["sample"],
+                residual=training.residual,
+                artifact=artifact,
+                yield_morph=yield_morph,
+                training=training,
+            )
+        return result
+
+    def configured_fnf_manifests(
+        self,
+        *,
+        require_existing: bool = True,
+    ) -> dict[str, Path]:
+        """Return sample-to-manifest paths declared by the YAML project."""
+
+        result = {
+            model["sample"]: self._resolve_path(model["output_path"])
+            for model in self.fnf_model_specifications()
+        }
+        if require_existing:
+            missing = [path for path in result.values() if not path.is_file()]
+            if missing:
+                raise FileNotFoundError(missing[0])
+        return result
+
+    def load_fnf_systematics(
+        self,
+        *,
+        device: str | None = None,
+        verify: bool = True,
+    ) -> dict[str, FNFModelArtifacts]:
+        """Load and verify all sample-specific FNF artifacts from YAML paths."""
+
+        from .artifacts import ArtifactManifest
+        from .fnf import (
+            FactorizableResidualStack,
+            FNFArtifact,
+            LogQuadraticYieldMorph,
+        )
+
+        result: dict[str, FNFModelArtifacts] = {}
+        for model in self.fnf_model_specifications():
+            configured, training_config = self.fnf_configs(model["name"])
+            artifact = FNFArtifact.load(
+                self._resolve_path(model["output_path"]),
+                verify=verify,
+            )
+            payload = json.loads(artifact.model_path.read_text(encoding="utf-8"))
+            metadata = payload.get("metadata", {})
+            manifest_metadata = ArtifactManifest.load(artifact.manifest_path).metadata
+            expected_metadata = {
+                "component": model["sample"],
+                "features": list(self.config.features),
+                "model_name": model["name"],
+                "nuisance_names": list(configured.nuisance_names),
+            }
+            for key, expected in expected_metadata.items():
+                if metadata.get(key) != expected:
+                    raise ValueError(
+                        f"FNF artifact metadata {key!r} does not match "
+                        f"configured model {model['name']!r}."
+                    )
+            if metadata.get("base_density_dependencies") != manifest_metadata.get(
+                "base_density_dependencies"
+            ):
+                raise ValueError(
+                    f"FNF artifact base-density dependencies do not match "
+                    f"configured model {model['name']!r}."
+                )
+            residual = FactorizableResidualStack.load(
+                artifact.manifest_path,
+                device=(
+                    training_config.device
+                    if device is None
+                    else self._resolve_device(device)
+                ),
+                verify=verify,
+            )
+            yield_payload = metadata.get("yield_morph")
+            yield_morph = (
+                None
+                if yield_payload is None
+                else LogQuadraticYieldMorph.from_dict(yield_payload)
+            )
+            result[model["sample"]] = FNFModelArtifacts(
+                name=model["name"],
+                sample=model["sample"],
+                residual=residual,
+                artifact=artifact,
+                yield_morph=yield_morph,
+            )
+        return result
+
+    def build_fnf_runtime_systematics(
+        self,
+        *,
+        reference_density: Any,
+        ratios: RatioSetTrainingArtifacts,
+        reference_manifest: str | Path,
+        device: str | None = None,
+    ) -> dict[str, Any]:
+        """Bind configured residuals to their normalized nominal densities."""
+
+        from .artifacts import ArtifactManifest, sha256_file
+        from .fnf import FactorizableDensity
+        from .fnf_runtime import (
+            FNFSystematic,
+            NativeProcessDensity,
+            load_verified_reference_density,
+        )
+        from .native_ratios import load_native_ratio_torch_ensemble
+
+        loaded = self.load_fnf_systematics(device=device)
+        missing = set(loaded).difference(ratios.training)
+        if missing:
+            raise KeyError(
+                f"Missing nominal ratio artifacts for FNF samples {sorted(missing)}."
+            )
+        reference_manifest_path = Path(reference_manifest)
+        if not reference_manifest_path.is_file():
+            raise FileNotFoundError(reference_manifest_path)
+        expected_normalizer_manifest = ratios.normalizer_path.with_suffix(
+            ratios.normalizer_path.suffix + ".manifest.json"
+        )
+        if (
+            expected_normalizer_manifest.resolve()
+            != Path(ratios.normalizer_manifest).resolve()
+        ):
+            raise ValueError(
+                "Ratio artifacts do not bind their declared normalizer manifest."
+            )
+        authenticated_normalizer = RatioNormalizer.load(ratios.normalizer_path)
+        if (
+            authenticated_normalizer.means != ratios.normalizer.means
+            or authenticated_normalizer.standard_errors
+            != ratios.normalizer.standard_errors
+            or authenticated_normalizer.metadata != ratios.normalizer.metadata
+        ):
+            raise ValueError(
+                "The live ratio normalizer disagrees with its checked artifact."
+            )
+        runtime_device = "cpu" if device is None else self._resolve_device(device)
+        authenticated_reference = load_verified_reference_density(
+            reference_manifest_path,
+            features=tuple(self.config.features),
+            device=runtime_device,
+            live_density=reference_density,
+        )
+        authenticated_ratios = {}
+        for sample in loaded:
+            manifest_path = ratios.training[sample].manifest_path
+            authenticated_ratios[sample] = load_native_ratio_torch_ensemble(
+                manifest_path,
+                device=runtime_device,
+                expected_features=tuple(self.config.features),
+                live_ensemble=ratios.evaluators[sample],
+            )
+        reference_digest = sha256_file(reference_manifest_path)
+        result = {}
+        for sample, artifact in loaded.items():
+            manifest = ArtifactManifest.load(artifact.manifest_path)
+            dependencies = manifest.metadata.get("base_density_dependencies")
+            ratio_manifest = Path(ratios.training[sample].manifest_path)
+            if not isinstance(dependencies, Mapping):
+                raise ValueError(
+                    f"FNF artifact for {sample!r} has no authenticated "
+                    "base-density dependencies."
+                )
+            if dependencies.get("reference_manifest_sha256") != reference_digest:
+                raise ValueError(
+                    f"FNF artifact for {sample!r} was trained with a different "
+                    "reference-flow manifest."
+                )
+            if dependencies.get("ratio_manifest_sha256") != sha256_file(ratio_manifest):
+                raise ValueError(
+                    f"FNF artifact for {sample!r} was trained with a different "
+                    "native ratio manifest."
+                )
+            if not np.isclose(
+                float(dependencies.get("ratio_normalization", np.nan)),
+                float(authenticated_normalizer.means[sample]),
+                rtol=0.0,
+                atol=0.0,
+            ):
+                raise ValueError(
+                    f"FNF artifact for {sample!r} was trained with a different "
+                    "ratio normalization."
+                )
+            base = NativeProcessDensity(
+                reference_density=authenticated_reference,
+                ratio=authenticated_ratios[sample],
+                ratio_normalization=authenticated_normalizer.means[sample],
+            )
+            result[sample] = FNFSystematic(
+                density=FactorizableDensity(
+                    residual=artifact.residual,
+                    base_density=base,
+                    base_torch_log_prob=base.torch_log_prob,
+                ),
+                yield_morph=artifact.yield_morph,
+            )
+        return result
+
+    def _validate_configured_fnf_runtime(
+        self,
+        supplied: Mapping[str, Any] | None,
+        *,
+        operation: str,
+    ) -> dict[str, Any]:
+        expected = {model["sample"] for model in self.fnf_model_specifications()}
+        if supplied is None:
+            if expected:
+                raise ValueError(
+                    f"{operation} would ignore configured FNF models for "
+                    f"{sorted(expected)}; supply fnf_systematics explicitly."
+                )
+            return {}
+        parsed = dict(supplied)
+        if expected and set(parsed) != expected:
+            raise ValueError(
+                f"{operation} FNF components must match the YAML project: "
+                f"expected {sorted(expected)}, found {sorted(parsed)}."
+            )
+        return parsed
 
     def design_distribution(self, name: str) -> Any:
         """Construct a normalized rho/nu/kappa design from configuration."""
@@ -558,6 +1185,10 @@ class Project:
             epochs=int(training["epochs"]),
             batch_size=int(training["batch_size"]),
             learning_rate=float(training["learning_rate"]),
+            learning_rate_factor=float(training.get("lr_reduction_factor", 0.5)),
+            calibration=bool(ratio.get("calibration", False)),
+            calibration_type=str(ratio.get("calibration_type", "isotonic")),
+            calibration_bins=int(ratio.get("calibration_bins", 40)),
             validation_fraction=float(training.get("validation_fraction", 0.1)),
             holdout_fraction=float(training.get("holdout_fraction", 0.3)),
             patience=int(training.get("early_stopping_patience", 30)),
@@ -579,17 +1210,26 @@ class Project:
     ) -> RatioSetTrainingArtifacts:
         """Train all nominal ratios against fresh frozen-flow samples."""
 
-        from .integrations import NsbiCommonUtilsBackend
+        from .native_ratios import NativeRatioBackend
         from .ratios import RatioTrainer
 
         configured_backend = self._frequentist()["ratios"].get("backend", "native")
         if backend is None:
-            if configured_backend != "nsbi_common_utils":
+            if configured_backend != "native":
                 raise ValueError(
-                    "Frequentist ratio training supports only the configured "
-                    "nsbi_common_utils backend."
+                    "Frequentist ratio training supports only the native backend."
                 )
-            backend = NsbiCommonUtilsBackend()
+            backend = NativeRatioBackend(
+                device=self._resolve_device(
+                    str(
+                        self._frequentist()["ratios"]["training"].get(
+                            "device",
+                            "cpu",
+                        )
+                    )
+                ),
+                opset_version=int(self._frequentist()["ratios"].get("onnx_opset", 17)),
+            )
         normalization_mode = self._frequentist()["ratios"].get(
             "normalization", "independent_reference_mean"
         )
@@ -600,8 +1240,16 @@ class Project:
             )
         training: dict[str, Any] = {}
         rng = np.random.default_rng(seed)
+        sample_specifications = {
+            sample["name"]: sample["source"]
+            for sample in self._frequentist()["samples"]
+        }
         for name, source in self.sample_sources().items():
             target = source.materialize(max_events=max_events_per_sample)
+            target_split, target_groups = self._ratio_partition_metadata(
+                sample_specifications[name],
+                target,
+            )
             count = (
                 len(target.values)
                 if denominator_events is None
@@ -616,6 +1264,8 @@ class Project:
                 numerator_weights=target.weights,
                 numerator_name=name,
                 denominator_name="reference_flow",
+                numerator_split=target_split,
+                numerator_groups=target_groups,
             )
         normalization_values = np.asarray(
             reference.sample(int(normalization_events), rng=rng),
@@ -653,6 +1303,7 @@ class Project:
         seed: int = 0,
         write: bool = True,
         systematics: Mapping[str, list[Any] | tuple[Any, ...]] | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
     ) -> Any:
         """Build the configured direct Asimov and optionally write Parquet."""
 
@@ -681,6 +1332,7 @@ class Project:
             ratios=ratios,
             normalizer=normalizer,
             systematics=systematics,
+            fnf_systematics=fnf_systematics,
         ).build(
             (configuration["parameter_point"] if point is None else point),
             n_events=int(configuration["n_events"] if n_events is None else n_events),
@@ -701,7 +1353,7 @@ class Project:
     ) -> dict[str, dict[str, dict[str, Any]]]:
         """Train every configured up/nominal and down/nominal ratio."""
 
-        from .integrations import NsbiCommonUtilsBackend
+        from .native_ratios import NativeRatioBackend
         from .ratios import RatioTrainer
         from .systematics import SystematicSpecification, SystematicsTrainer
 
@@ -710,8 +1362,16 @@ class Project:
         if not configurations:
             return {}
         if backend is None:
-            backend = NsbiCommonUtilsBackend()
+            backend = NativeRatioBackend(
+                device=self._resolve_device(
+                    str(section["ratios"]["training"].get("device", "cpu"))
+                ),
+                opset_version=int(section["ratios"].get("onnx_opset", 17)),
+            )
         nominal_sources = self.sample_sources()
+        nominal_specifications = {
+            sample["name"]: sample["source"] for sample in section["samples"]
+        }
         output: dict[str, dict[str, dict[str, Any]]] = {}
         for systematic in configurations:
             systematic_output: dict[str, dict[str, Any]] = {}
@@ -723,6 +1383,18 @@ class Project:
                 )
                 down = self.data_source(variation["down"]).materialize(
                     max_events=max_events
+                )
+                nominal_split, nominal_groups = self._ratio_partition_metadata(
+                    nominal_specifications[sample],
+                    nominal,
+                )
+                up_split, up_groups = self._ratio_partition_metadata(
+                    variation["up"],
+                    up,
+                )
+                down_split, down_groups = self._ratio_partition_metadata(
+                    variation["down"],
+                    down,
                 )
                 nominal_sum = float(np.sum(nominal.weights))
                 if nominal_sum <= 0:
@@ -757,6 +1429,12 @@ class Project:
                     nominal_weights=nominal.weights,
                     up_weights=up.weights,
                     down_weights=down.weights,
+                    nominal_split=nominal_split,
+                    up_split=up_split,
+                    down_split=down_split,
+                    nominal_groups=nominal_groups,
+                    up_groups=up_groups,
+                    down_groups=down_groups,
                 )
                 systematic_output[sample] = {
                     **trained,
@@ -863,30 +1541,35 @@ class Project:
         systematic_modifiers: Mapping[str, list[Mapping[str, Any]]] | None = None,
         reference_manifest: str | Path | None = None,
         ratio_manifests: Mapping[str, str | Path] | None = None,
-        require_upstream_compatible: bool = False,
+        fnf_manifests: Mapping[str, str | Path] | None = None,
     ) -> Any:
-        """Decorate an upstream base workspace or write the hNSBI contract."""
+        """Write the native hNSBI JSON workspace configured by the YAML project."""
 
-        from .onnx import require_optional
-        from .workspace import write_nsbi_workspace
+        from .workspace import write_workspace
 
         workspace_config = self._frequentist()["workspace"]
         target = self._resolve_path(workspace_config["output_path"])
-        base_workspace = None
-        if "base_config" in workspace_config:
-            base_path = self._resolve_path(workspace_config["base_config"])
-            module = require_optional(
-                "nsbi_common_utils.workspace_builder",
-                extra="lhc",
-                purpose="building the configured upstream workspace",
-            )
-            base_workspace = module.WorkspaceBuilder(base_path).build()
+        template_workspace = None
+        if "template_path" in workspace_config:
+            template_path = self._resolve_path(workspace_config["template_path"])
+            try:
+                template_workspace = json.loads(
+                    template_path.read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"Could not load workspace template {template_path}."
+                ) from exc
+            if not isinstance(template_workspace, dict):
+                raise ValueError("Workspace template must be a JSON object.")
         pois = [
             parameter["name"]
             for parameter in self._frequentist()["parameters"]
             if parameter["role"] == "poi"
         ]
-        return write_nsbi_workspace(
+        if fnf_manifests is None and self.fnf_model_specifications():
+            fnf_manifests = self.configured_fnf_manifests()
+        return write_workspace(
             result=result,
             intensity=self.intensity_model(),
             output_dir=target.parent,
@@ -897,8 +1580,8 @@ class Project:
             systematic_modifiers=systematic_modifiers,
             reference_manifest=reference_manifest,
             ratio_manifests=ratio_manifests,
-            require_upstream_compatible=require_upstream_compatible,
-            base_workspace=base_workspace,
+            fnf_manifests=fnf_manifests,
+            template_workspace=template_workspace,
         )
 
     def generate_configured_toys(
@@ -910,6 +1593,7 @@ class Project:
         normalizer: RatioNormalizer | None = None,
         component_samplers: Mapping[str, Sampler] | None = None,
         systematics: Mapping[str, list[Any] | tuple[Any, ...]] | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
         seed: int = 0,
         write: bool = True,
     ) -> list[dict[str, Any]]:
@@ -930,7 +1614,19 @@ class Project:
                 normalizer=normalizer,
                 component_samplers=component_samplers,
                 systematics=systematics,
+                fnf_systematics=fnf_systematics,
             )
+        else:
+            expected_fnf = {
+                model["sample"] for model in self.fnf_model_specifications()
+            }
+            observed_fnf = set(getattr(generator, "fnf_systematics", {}))
+            if expected_fnf and observed_fnf != expected_fnf:
+                raise ValueError(
+                    "Configured toy generation would ignore FNF models: "
+                    f"expected {sorted(expected_fnf)}, found "
+                    f"{sorted(observed_fnf)}."
+                )
         output_root = self._resolve_path(
             configuration.get("output_path", self.output_directory / "toys")
         )
@@ -970,30 +1666,44 @@ class Project:
     def workspace_runtime(
         self,
         path: str | Path | None = None,
-        **upstream_kwargs: Any,
+        *,
+        fnf_systematics: Mapping[str, Any] | None = None,
+        fnf_device: str = "cpu",
+        onnx_providers: tuple[str, ...] | None = None,
     ) -> Any:
-        """Route a workspace to upstream inference or the formula likelihood."""
+        """Load a native serialized workspace as an extended likelihood."""
 
         from .likelihood import ExtendedUnbinnedLikelihood
-        from .workspace import load_workspace
 
         workspace_path = (
             self._resolve_path(self._frequentist()["workspace"]["output_path"])
             if path is None
             else Path(path)
         )
-        workspace = load_workspace(workspace_path)
-        if workspace.get("hnsbi", {}).get("upstream_compatible", True):
-            from .integrations import NsbiCommonUtilsInference
+        return ExtendedUnbinnedLikelihood.from_workspace(
+            workspace_path,
+            fnf_systematics=fnf_systematics,
+            fnf_device=self._resolve_device(fnf_device),
+            onnx_providers=onnx_providers,
+        )
 
-            return NsbiCommonUtilsInference.from_workspace(
-                workspace_path, **upstream_kwargs
+    def combined_workspace_runtime(
+        self,
+        paths: Mapping[str, str | Path],
+        *,
+        use_configured_paths: bool = True,
+    ) -> Any:
+        """Load independent channels with shared parameters and constraints."""
+
+        from .multi_workspace import CombinedLikelihood
+
+        likelihoods = {
+            name: self.workspace_runtime(
+                self.resolve_path(path) if use_configured_paths else Path(path)
             )
-        if upstream_kwargs:
-            raise ValueError(
-                "upstream_kwargs are only valid for an upstream-compatible workspace."
-            )
-        return ExtendedUnbinnedLikelihood.from_workspace(workspace_path)
+            for name, path in paths.items()
+        }
+        return CombinedLikelihood(likelihoods)
 
     def asimov_builder(
         self,
@@ -1002,7 +1712,12 @@ class Project:
         ratios: Mapping[str, RatioEvaluator],
         normalizer: RatioNormalizer | None = None,
         systematics: Mapping[str, list[Any] | tuple[Any, ...]] | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
     ) -> AsimovBuilder:
+        fnf = self._validate_configured_fnf_runtime(
+            fnf_systematics,
+            operation="Asimov construction",
+        )
         return AsimovBuilder(
             reference=reference,
             ratios=ratios,
@@ -1010,6 +1725,7 @@ class Project:
             features=self.config.features,
             normalizer=normalizer,
             systematics=systematics,
+            fnf_systematics=fnf,
         )
 
     def train_nis_asimov(
@@ -1021,6 +1737,7 @@ class Project:
         asimov_point: Mapping[str, float] | None = None,
         seed: int | None = None,
         systematics: Mapping[str, list[Any] | tuple[Any, ...]] | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
     ) -> NISWorkflowArtifacts:
         """Run configured pilot design, proposal training, diagnostics, and NIS.
 
@@ -1043,6 +1760,10 @@ class Project:
         if "nis" not in section:
             raise ValueError("This project has no NIS configuration.")
         nis = section["nis"]
+        fnf = self._validate_configured_fnf_runtime(
+            fnf_systematics,
+            operation="NIS Asimov construction",
+        )
         default_point = section.get("asimov", {}).get("parameter_point")
         if truth_point is None:
             truth_point = default_point
@@ -1093,6 +1814,7 @@ class Project:
             intensity=self.intensity_model(),
             trainer=adapter,
             systematics=systematics,
+            fnf_systematics=fnf,
         ).fit(
             truth_point=truth_point,
             design_points=nis["design_points"],
@@ -1177,6 +1899,7 @@ class Project:
             intensity=self.intensity_model(),
             features=self.config.features,
             systematics=systematics,
+            fnf_systematics=fnf,
         ).build(
             asimov_point,
             n_events=int(nis["target_events"]),
@@ -1213,7 +1936,12 @@ class Project:
         normalizer: RatioNormalizer | None = None,
         component_samplers: Mapping[str, Sampler] | None = None,
         systematics: Mapping[str, list[Any] | tuple[Any, ...]] | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
     ) -> ToyGenerator:
+        fnf = self._validate_configured_fnf_runtime(
+            fnf_systematics,
+            operation="Toy generation",
+        )
         return ToyGenerator(
             intensity=self.intensity_model(),
             features=self.config.features,
@@ -1222,4 +1950,5 @@ class Project:
             normalizer=normalizer,
             component_samplers=component_samplers,
             systematics=systematics,
+            fnf_systematics=fnf,
         )

@@ -1,12 +1,18 @@
 # Examples
 
 The examples are organized by scientific workflow rather than by exercise
-number. The complete configurations in `configs/` are intended as readable
-templates:
+number. YAML is the primary human interface:
 
-- `frequentist_complete.json` covers reference-flow training, density ratios,
-  an `nsbi-common-utils` workspace, toys, a normalized weighted Asimov sample,
-  NIS, and up/down shape variations.
+- `lhc_analysis/analysis.yaml` drives the full frequentist analysis;
+- `dingo_bbh/dual.yaml` and `dingo_bns/dual.yaml` drive the dual Bayesian
+  examples.
+
+The JSON files in `configs/` demonstrate the equivalent machine
+serialization:
+
+- `frequentist_complete.json` covers native reference-flow and ratio training,
+  a JSON workspace, toys, a normalized weighted Asimov sample, NIS, and
+  up/down shape variations.
 - `dual_complete.json` describes the five frozen objects in the dual
   hNPE--hNDE construction using independent data drawn under the
   $\rho$, $\nu$, and $\kappa$ designs.
@@ -16,8 +22,7 @@ For a Python dictionary backed by an in-memory `pyarrow.Table` or
 `awkward.Array`, use a `registry_key` in place of a path and register the
 object before starting the workflow.
 
-The preserved paper notebooks are available in `notebooks/` with descriptive
-names and Google Colab badges:
+Colab-ready notebooks are available in `notebooks/`:
 
 - `hybrid_reference_flow_and_density_ratios.ipynb`
 - `neural_importance_sampling_asimov.ipynb`
@@ -25,11 +30,15 @@ names and Google Colab badges:
 - `sbibm_slcp_benchmark.ipynb`
 - `sbibm_two_moons_benchmark.ipynb`
 
-These are end-to-end reproductions from the paper development repository.
-Their scientific cells and legacy `utils_*` helper dependency closure are
-preserved. Filenames, Colab badges, environment bootstrap cells, and
-schema-only notebook metadata were adapted for this repository. Outputs were
-cleared for the new workspace, so the notebooks must be rerun.
+The two frequentist notebooks now use the self-contained native runtime. The
+Bayesian benchmark notebooks preserve the paper workflows.
+
+Additional examples are:
+
+- `lhc_analysis/`: full YAML-driven synthetic analysis with three
+  systematics, pulls, impacts, and pyhf CLs limits;
+- `dingo_bbh/` and `dingo_bns/`: reduced synthetic DINGO-inspired, opt-in
+  end-to-end dual hNPE--hNDE studies with exact likelihood oracles.
 
 The full paper settings remain the reproducibility target and are intentionally
 too expensive for pull-request CI. Package tests use separate synthetic smoke

@@ -1,33 +1,23 @@
 # Systematic variations
 
-The initial interface supports the `NormPlusShape` pattern already used by
-`nsbi-common-utils`: each affected nominal sample has explicit up and down
-datasets, and the backend trains the corresponding density ratios and supplies
-its standard diagnostics.
+The YAML interface names the nuisance parameter, every affected nominal
+sample, its up/down data sources, optional yield anchors, and interpolation
+convention. `Project.train_systematics()` uses the same native classifier
+stack and diagnostics as nominal ratio training.
 
-The configuration names:
+Variation and nominal sources use the same leakage-safe partition contract as
+nominal ratio training. Configure `split_column` for fixed scientific
+partitions and `group_column` (or `event_id_column`) for correlated rows.
+Shared identifiers in nominal/up/down samples are assigned to the same
+partition, and inconsistent explicit labels are rejected.
 
-- the nuisance parameter and its constraint;
-- every affected physics sample;
-- up/down data sources;
-- optional up/down total-yield anchors;
-- the interpolation convention used between templates.
+`Project.build_systematic_modifiers()` evaluates both ensembles on the exact
+workspace reference support, separates their integrated yield factors from
+their shape ratios, and writes checksummed `SystematicAnchor` arrays.
 
-`Project.train_systematics()` uses the same configured ratio trainer for
-`up/nominal` and `down/nominal`. `Project.build_systematic_modifiers()` then
-evaluates both ensembles on the exact workspace reference support, separates
-their integrated yield factors from their shape ratios, and writes checksummed
-`SystematicAnchor` arrays. The toolkit does not implement the FNF exercise in
-the initial scope.
-
-`yield_up` and `yield_down`, when present on a variation, are multiplicative
-total-yield factors relative to that sample's nominal yield. They override
-rate information inferred from the event tables. Both must be finite and
-nonnegative; `nsbi_code4p` requires strictly positive anchors because its
-extrapolation is logarithmic. A zero anchor is therefore supported only with
-`linear` interpolation.
-
-When either anchor is omitted, `Project.train_systematics()` falls back to
+`yield_up` and `yield_down` are multiplicative factors relative to the
+sample's nominal yield. They override rate information inferred from event
+tables. If omitted, the toolkit uses
 
 $$
 y_{\rm up/down}
@@ -36,42 +26,30 @@ y_{\rm up/down}
      {\sum_{j\in{\rm nominal}} w_j}.
 $$
 
-This fallback is a physical-normalization contract, not a row-count
-convention: event weights must integrate to the corresponding physical sample
-yields. If training is truncated with `max_events`, the retained weights must
-already be rescaled to preserve those integrals; otherwise configure the yield
-anchors explicitly. The training result records each direction's source as
-`configured` or `integrated_mc_weights`.
+That fallback requires weights which preserve physical sample normalization.
+Use explicit anchors for shape-only inputs. `nsbi_code4p` requires strictly
+positive anchors; `linear` is the only interpolation that permits zero.
 
-## Normalization
+## Shape normalization
 
-The native hNSBI likelihood treats normalization and shape separately. It
-interpolates the up/down yield factors and pointwise shape anchors, then
-renormalizes the joint interpolated shape under the fixed reference quadrature
-at every nuisance value. This preserves the configured extended yield even
-between anchors. Both `linear` and the upstream-compatible `nsbi_code4p`
-(HistFactory strategy 5) anchor interpolations are available.
+The likelihood interpolates rate and shape separately, then renormalizes the
+joint shape under the fixed reference quadrature at every nuisance value.
+This preserves the configured extended yield at nominal, anchor, and
+intermediate points. `ToyGenerator`, `AsimovBuilder`,
+`NISAsimovBuilder`, and `ExtendedUnbinnedLikelihood` all use the same
+`SystematicRatioEvaluator`.
 
-This intermediate-point normalization is not performed by the pinned
-`nsbi-common-utils` runtime. Consequently, every workspace containing a
-`normplusshape` modifier is marked `hnsbi.upstream_compatible=false` and
-`Project.workspace_runtime()` selects `ExtendedUnbinnedLikelihood`. It never
-silently sends such a workspace through an upstream runtime with different
-rate semantics.
+## FNF alternative
 
-`RuntimeSystematic` exposes the same interpolation and separated yield/shape
-contract to `ToyGenerator`, `AsimovBuilder`, and `NISAsimovBuilder`; callers
-supply callable up/down ratio evaluators. `Project.build_runtime_systematics()`
-turns the output of `Project.train_systematics()` into this shared runtime
-mapping. `SystematicRatioEvaluator` is the support-bound implementation used
-by Asimov construction and `ExtendedUnbinnedLikelihood`, preventing the two
-paths from drifting in their anchor or intermediate-point normalization.
+Use a factorizable normalizing flow when a continuous normalized
+multi-nuisance density is preferable to independent endpoint interpolation.
+The FNF is exactly the identity at the nominal point and keeps the yield morph
+separate from the normalized shape. See {doc}`fnf`.
 
-Validate:
+For either representation, validate:
 
-- up/down reweighting closure for every affected process;
-- total-yield behavior across the nuisance scan;
-- ratio normalization at nominal, anchor, and intermediate nuisance points;
-- the two-dimensional likelihood surface in parameter-of-interest and
-  nuisance directions;
+- up/down closure for every affected process;
+- total yield across the nuisance scan;
+- shape normalization at anchors and interpolation points;
+- POI--nuisance likelihood surfaces;
 - the Asimov minimum at the generating point.

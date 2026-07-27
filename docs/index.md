@@ -1,9 +1,9 @@
 # hnsbi-toolkit
 
-`hnsbi-toolkit` packages the hybrid neural density-estimation (hNDE) and dual
-hNPE--hNDE workflows used in the accompanying paper and tutorials. It combines
-a normalized, generative flow with classifier density ratios while keeping
-normalization and validation explicit.
+`hnsbi-toolkit` packages self-contained hybrid neural density-estimation
+(hNDE) and dual hNPE--hNDE workflows. YAML describes the human-authored
+analysis; JSON, ONNX, NumPy, and native checkpoints provide stable machine
+artifacts.
 
 The frequentist path targets unbinned LHC-style intensity models. The Bayesian
 path freezes five complementary learned objects and supports both
@@ -31,6 +31,8 @@ frequentist/toys
 frequentist/asimov
 frequentist/nis
 frequentist/systematics
+frequentist/fnf
+frequentist/impacts_limits
 ```
 
 ```{toctree}
@@ -50,8 +52,10 @@ bayesian/validation
 specifications/data
 specifications/configuration
 specifications/artifacts
-specifications/nsbi-backend
+specifications/native-backend
 examples/colab
+examples/lhc
+examples/dingo
 ```
 
 ```{toctree}

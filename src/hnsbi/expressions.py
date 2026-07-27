@@ -101,6 +101,50 @@ class Expression:
             )
         return self._evaluate_node(self._tree.body, parameters)
 
+    def evaluate_with(
+        self,
+        parameters: Mapping[str, Any],
+        functions: Mapping[str, Any],
+    ) -> Any:
+        """Evaluate with a NumPy-compatible function namespace.
+
+        This is the bridge used by the native JAX likelihood. The expression
+        grammar remains identical; only the array implementation changes.
+        """
+
+        missing = self.names.difference(parameters)
+        if missing:
+            raise ExpressionError(
+                f"Expression {self.source!r} is missing parameters {sorted(missing)}."
+            )
+        missing_functions = set(_FUNCTIONS).difference(functions)
+        if missing_functions:
+            raise ExpressionError(
+                f"Function namespace is missing {sorted(missing_functions)}."
+            )
+
+        def evaluate(node: ast.AST) -> Any:
+            if isinstance(node, ast.Constant):
+                return node.value
+            if isinstance(node, ast.Name):
+                if node.id in _FUNCTIONS:
+                    return functions[node.id]
+                return parameters[node.id]
+            if isinstance(node, ast.BinOp):
+                return _BINARY[type(node.op)](
+                    evaluate(node.left),
+                    evaluate(node.right),
+                )
+            if isinstance(node, ast.UnaryOp):
+                return _UNARY[type(node.op)](evaluate(node.operand))
+            if isinstance(node, ast.Call):
+                return functions[node.func.id](
+                    *[evaluate(argument) for argument in node.args]
+                )
+            raise AssertionError(f"Validated node {type(node).__name__} was lost.")
+
+        return evaluate(self._tree.body)
+
     @classmethod
     def _evaluate_node(cls, node: ast.AST, parameters: Mapping[str, Any]) -> Any:
         if isinstance(node, ast.Constant):
@@ -127,8 +171,7 @@ class Expression:
     def simple_normfactors(self) -> tuple[str, ...] | None:
         """Return a product of bare parameter names when representable.
 
-        This is the exact subset that maps to the upstream
-        ``nsbi-common-utils`` ``normfactor`` modifiers.
+        This is the exact subset that maps to ordinary ``normfactor`` modifiers.
         """
 
         def flatten(node: ast.AST) -> list[str] | None:
@@ -146,8 +189,6 @@ class Expression:
 
         result = flatten(self._tree.body)
         if result is None or len(result) != len(set(result)):
-            # The upstream model de-duplicates modifier names per
-            # sample, so ``mu * mu`` would be evaluated incorrectly as
-            # ``mu``. Keep powers and repeated factors on the formula route.
+            # Keep powers and repeated factors on the general formula route.
             return None
         return tuple(result)

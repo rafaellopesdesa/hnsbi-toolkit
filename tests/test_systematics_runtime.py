@@ -154,7 +154,7 @@ def test_systematic_workspace_round_trip_preserves_metadata_and_likelihood(
     assert specification.interpolation == "nsbi_code4p"
     assert specification.yield_up == pytest.approx(1.2)
     assert specification.yield_down == pytest.approx(0.85)
-    assert not export.upstream_compatible
+    assert export.schema_version == "2.0"
 
     loaded = ExtendedUnbinnedLikelihood.from_workspace(export.path)
     direct = ExtendedUnbinnedLikelihood(

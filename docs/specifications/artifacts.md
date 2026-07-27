@@ -54,30 +54,28 @@ Each configured physics sample receives its own directory:
 ratios/signal/
 ├── ratio_ensemble.manifest.json
 ├── member_000/
-│   ├── model0.onnx
-│   ├── model0.onnx.manifest.json
-│   ├── model_scaler0.onnx
-│   ├── model_scaler0.onnx.manifest.json
-│   ├── model_scaler0.bin
-│   ├── member.manifest.json
+│   ├── ratio_state.pt
+│   ├── log_ratio.onnx
+│   ├── log_ratio.onnx.manifest.json
+│   ├── calibration.json
+│   ├── training_history.json
+│   ├── split_provenance.json
 │   ├── onnx_parity.json
 │   └── diagnostics/
 └── member_001/
     └── ...
 ```
 
-The root artifact type is `density-ratio-ensemble`; each member has type
-`nsbi-common-utils-ratio-member`. The root manifest records the numerator and
+The root artifact type is `density-ratio-ensemble`. It records numerator and
 denominator names, ordered features, exact training configuration, backend,
 independent class-weight normalization, and
-`arithmetic-mean-of-ratios` reduction. Member manifests bind the ONNX scaler
-and classifier to those identities and record the native artifacts retained
-for provenance.
+`arithmetic-mean-of-ratios` reduction.
 
-Portable inference uses `scaler ONNX -> classifier ONNX -> ratio`. The joblib
-scaler exists because the upstream trainer writes it, but the default loader
-does not deserialize an untrusted pickle. Loading a serialized calibrator
-likewise requires an explicit unsafe-pickle opt-in.
+Portable inference uses one physical-input `log_ratio.onnx` graph per member;
+the standardizer is embedded in that graph. Optional isotonic or histogram
+calibration is represented by finite arrays in JSON, not a Python pickle.
+The native checkpoint is retained for trusted restart and the manifest binds
+it to split provenance, training history, diagnostics, and ONNX parity.
 
 The independent process normalizers
 $C_s=\mathbb E_q[\widehat r_s]$ are returned in the
@@ -89,7 +87,7 @@ extension and Asimov metadata; they are not hidden inside a classifier graph.
 
 ## Asimov and workspace arrays
 
-`AsimovResult.write_nsbi_arrays()` writes:
+`AsimovResult.write_workspace_arrays()` writes:
 
 ```text
 arrays/
@@ -155,8 +153,8 @@ dual_model/
     └── artifact.manifest.json
 ```
 
-Ensemble member filenames can differ when an established ratio backend is
-injected; the manifest roles, rather than guessed filenames, are the stable
+Ensemble member filenames can differ when a custom research backend is
+injected; manifest roles, rather than guessed filenames, are the stable
 contract. `dual_model.manifest.json` records the ordered $\theta$ and
 observation signatures, graph tensor names, transforms and Jacobian
 conventions, ensemble reductions, posterior-ratio denominator provenance, and

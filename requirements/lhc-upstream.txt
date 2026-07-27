@@ -1,1 +1,0 @@
-nsbi-common-utils @ git+https://github.com/iris-hep/nsbi-lhc-toolkit.git@main

@@ -848,6 +848,63 @@ class ReferenceFlow:
             result = result + self.scaler.forward_log_abs_det
         return result.detach().cpu().numpy().reshape(-1)
 
+    def torch_log_prob(self, values: Any, *, context: Any | None = None) -> Any:
+        """Evaluate a differentiable log density for physical Torch inputs."""
+
+        torch = require_optional(
+            "torch",
+            extra="flows",
+            purpose="differentiable reference-flow evaluation",
+        )
+        tensor = (
+            values.to(device=self.device, dtype=torch.float32)
+            if torch.is_tensor(values)
+            else torch.as_tensor(values, dtype=torch.float32, device=self.device)
+        )
+        if tensor.ndim != 2 or tensor.shape[1] != self.config.n_features:
+            raise ValueError(f"values must have shape (n, {self.config.n_features}).")
+        if context is not None:
+            context_tensor = (
+                context.to(device=self.device, dtype=torch.float32)
+                if torch.is_tensor(context)
+                else torch.as_tensor(
+                    context,
+                    dtype=torch.float32,
+                    device=self.device,
+                )
+            )
+            if context_tensor.ndim == 1:
+                context_tensor = context_tensor.unsqueeze(0)
+            if context_tensor.shape[0] == 1 and tensor.shape[0] != 1:
+                context_tensor = context_tensor.expand(tensor.shape[0], -1)
+        else:
+            context_tensor = None
+        if self.is_conditional and context_tensor is None:
+            raise ValueError("context is required by this conditional flow.")
+        if not self.is_conditional and context_tensor is not None:
+            raise ValueError("context was provided to an unconditional flow.")
+        mean = torch.as_tensor(
+            self.scaler.mean,
+            dtype=tensor.dtype,
+            device=tensor.device,
+        )
+        scale = torch.as_tensor(
+            self.scaler.scale,
+            dtype=tensor.dtype,
+            device=tensor.device,
+        )
+        standardized = (tensor - mean) / scale
+        self.model.eval()
+        return (
+            _model_log_prob(
+                self.model,
+                standardized,
+                context_tensor,
+                self.config,
+            )
+            + self.scaler.forward_log_abs_det
+        ).reshape(-1)
+
     def data_to_base(self, values: Any, *, context: Any | None = None) -> np.ndarray:
         """Map original feature vectors to deterministic standard-normal codes."""
 

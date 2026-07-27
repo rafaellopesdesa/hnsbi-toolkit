@@ -10,7 +10,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0",
+      "const": "2.0",
       "description": "Configuration contract version, independent of the Python package version."
     },
     "features": {
@@ -119,7 +119,12 @@
         "split_column": {
           "type": "string",
           "minLength": 1,
-          "description": "Bayesian sources use exact row values train, validation, or holdout. The column is preserved for other workflows."
+          "description": "Exact row values train, validation, or holdout used by Bayesian, density-ratio, systematic, and other training workflows."
+        },
+        "group_column": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional group identifier used to keep correlated ratio, systematic, and FNF events in the same train, validation, or holdout partition."
         },
         "batch_size": {
           "$ref": "#/$defs/positiveInteger"
@@ -393,7 +398,8 @@
           "enum": [
             "relu",
             "swish",
-            "tanh"
+            "tanh",
+            "gelu"
           ]
         },
         "validation_fraction": {
@@ -405,6 +411,15 @@
         "early_stopping_patience": {
           "type": "integer",
           "minimum": 1
+        },
+        "lr_reduction_factor": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "exclusiveMaximum": 1.0
+        },
+        "device": {
+          "type": "string",
+          "minLength": 1
         },
         "seed": {
           "type": "integer",
@@ -423,7 +438,6 @@
         "backend": {
           "type": "string",
           "enum": [
-            "nsbi_common_utils",
             "native"
           ],
           "default": "native"
@@ -458,6 +472,20 @@
             }
           },
           "additionalProperties": false
+        },
+        "calibration": {
+          "type": "boolean",
+          "default": false
+        },
+        "calibration_type": {
+          "type": "string",
+          "enum": [
+            "isotonic",
+            "histogram"
+          ]
+        },
+        "calibration_bins": {
+          "$ref": "#/$defs/positiveInteger"
         },
         "onnx_opset": {
           "type": "integer",
@@ -669,6 +697,232 @@
       ],
       "additionalProperties": false
     },
+    "fnfAnchor": {
+      "type": "object",
+      "required": [
+        "name",
+        "point",
+        "source"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "point": {
+          "$ref": "#/$defs/parameterPoint",
+          "description": "Nuisance coordinates for this simulation anchor. Omitted nuisance coordinates use their configured centers."
+        },
+        "source": {
+          "$ref": "#/$defs/dataSource"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fnfArchitecture": {
+      "type": "object",
+      "properties": {
+        "num_layers": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "hidden_features": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/positiveInteger"
+          }
+        },
+        "quadratic_scale": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "interaction_scale": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "log_scale_clip": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "shift_clip": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "fnfTraining": {
+      "type": "object",
+      "properties": {
+        "epochs": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "batch_size": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "learning_rate": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "weight_decay": {
+          "type": "number",
+          "minimum": 0.0
+        },
+        "validation_fraction": {
+          "$ref": "#/$defs/fraction"
+        },
+        "holdout_fraction": {
+          "$ref": "#/$defs/fraction"
+        },
+        "early_stopping_patience": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "min_delta": {
+          "type": "number",
+          "minimum": 0.0
+        },
+        "gradient_clip_norm": {
+          "type": "number",
+          "exclusiveMinimum": 0.0
+        },
+        "steps_per_epoch": {
+          "$ref": "#/$defs/positiveInteger",
+          "description": "Optional balanced mini-batch updates per epoch. If omitted, one pass through the largest anchor is used."
+        },
+        "device": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "cpu",
+            "cuda",
+            "mps"
+          ]
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_events_per_anchor": {
+          "$ref": "#/$defs/positiveInteger"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fnfModel": {
+      "type": "object",
+      "required": [
+        "name",
+        "sample",
+        "nuisances",
+        "anchors",
+        "output_path"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "sample": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "nuisances": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "centers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "scales": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "exclusiveMinimum": 0.0
+          }
+        },
+        "interactions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "items": false,
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "architecture": {
+          "$ref": "#/$defs/fnfArchitecture"
+        },
+        "training": {
+          "$ref": "#/$defs/fnfTraining"
+        },
+        "anchors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fnfAnchor"
+          }
+        },
+        "yield_anchors": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Per-nuisance [down, up] yield factors relative to the nominal sample yield.",
+          "additionalProperties": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0
+              }
+            ],
+            "items": false,
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "output_path": {
+          "type": "string",
+          "pattern": "[^/]+\\.manifest\\.json$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fnf": {
+      "type": "object",
+      "required": [
+        "models"
+      ],
+      "properties": {
+        "models": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/fnfModel"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "frequentist": {
       "type": "object",
       "required": [
@@ -702,14 +956,9 @@
               "required": [
                 "backend"
               ],
-              "not": {
-                "required": [
-                  "onnx_opset"
-                ]
-              },
               "properties": {
                 "backend": {
-                  "const": "nsbi_common_utils"
+                  "const": "native"
                 },
                 "normalization": {
                   "const": "independent_reference_mean"
@@ -748,7 +997,7 @@
           ],
           "properties": {
             "backend": {
-              "const": "nsbi_common_utils"
+              "const": "native"
             },
             "measurement": {
               "type": "string",
@@ -758,7 +1007,7 @@
               "type": "string",
               "minLength": 1
             },
-            "base_config": {
+            "template_path": {
               "type": "string",
               "minLength": 1
             },
@@ -769,11 +1018,85 @@
           },
           "additionalProperties": false
         },
+        "inference": {
+          "type": "object",
+          "required": [
+            "backend",
+            "poi"
+          ],
+          "properties": {
+            "backend": {
+              "const": "jax_iminuit"
+            },
+            "poi": {
+              "type": "string",
+              "minLength": 1
+            },
+            "impact_methods": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "global_observable",
+                  "covariance"
+                ]
+              }
+            },
+            "pyhf_projection": {
+              "type": "object",
+              "required": [
+                "observable",
+                "bins",
+                "range",
+                "scan"
+              ],
+              "properties": {
+                "observable": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "bins": {
+                  "$ref": "#/$defs/positiveInteger"
+                },
+                "range": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                "scan": {
+                  "type": "array",
+                  "minItems": 2,
+                  "items": {
+                    "type": "number",
+                    "minimum": 0.0
+                  }
+                },
+                "toys": {
+                  "$ref": "#/$defs/positiveInteger"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
         "systematics": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/systematic"
           }
+        },
+        "fnf": {
+          "$ref": "#/$defs/fnf"
         },
         "toys": {
           "type": "object",

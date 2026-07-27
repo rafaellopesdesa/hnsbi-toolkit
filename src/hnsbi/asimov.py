@@ -13,6 +13,7 @@ import numpy as np
 from .artifacts import write_artifact_manifest
 from .data import WeightedEvents
 from .diagnostics import effective_sample_size, json_safe
+from .fnf_runtime import evaluate_fnf_on_support, validate_fnf_systematics
 from .intensity import IntensityModel, RatioNormalizer
 from .protocols import RatioEvaluator, Sampler
 from .systematics import (
@@ -69,6 +70,7 @@ class AsimovResult:
     reference_weights: np.ndarray
     component_weights: dict[str, np.ndarray]
     systematic_anchors: dict[str, tuple[SystematicAnchor, ...]]
+    fnf_components: tuple[str, ...]
     auxiliary_observations: dict[str, float]
 
     @property
@@ -86,12 +88,15 @@ class AsimovResult:
             for name, weights in self.component_weights.items()
         }
 
-    def write_nsbi_arrays(self, directory: str | Path) -> dict[str, Path]:
-        """Write the pre-evaluated arrays consumed by nsbi-common-utils."""
+    def write_workspace_arrays(self, directory: str | Path) -> dict[str, Path]:
+        """Write the checked pre-evaluated arrays consumed by hNSBI."""
 
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
         paths: dict[str, Path] = {}
+        values_path = directory / "asimov_values.npy"
+        np.save(values_path, self.events.values)
+        paths["values"] = values_path
         weights_path = directory / "asimov_weights.npy"
         np.save(weights_path, self.events.weights)
         paths["weights"] = weights_path
@@ -114,6 +119,7 @@ class AsimovResult:
                 component: [anchor.parameter for anchor in anchors]
                 for component, anchors in self.systematic_anchors.items()
             },
+            "fnf_components": list(self.fnf_components),
         }
         metadata_path.write_text(
             json.dumps(
@@ -128,6 +134,7 @@ class AsimovResult:
         paths["metadata"] = metadata_path
         manifest_path = directory / "asimov_arrays.manifest.json"
         files = {
+            "event-values": values_path,
             "event-weights": weights_path,
             "reference-integration-weights": reference_weights_path,
             "metadata": metadata_path,
@@ -154,6 +161,11 @@ class AsimovResult:
         paths["manifest"] = manifest_path
         return paths
 
+    def write_nsbi_arrays(self, directory: str | Path) -> dict[str, Path]:
+        """Compatibility alias for :meth:`write_workspace_arrays`."""
+
+        return self.write_workspace_arrays(directory)
+
 
 def _evaluate_asimov_intensity(
     *,
@@ -167,12 +179,13 @@ def _evaluate_asimov_intensity(
         Sequence[RuntimeSystematic | SystematicAnchor],
     ]
     | None,
+    fnf_systematics: Mapping[str, Any] | None = None,
 ) -> tuple[
     np.ndarray,
     float,
     dict[str, np.ndarray],
     dict[str, tuple[SystematicAnchor, ...]],
-    dict[str, dict[str, float]],
+    dict[str, dict[str, Any]],
 ]:
     """Evaluate the physical intensity with normalized shape systematics."""
 
@@ -208,11 +221,19 @@ def _evaluate_asimov_intensity(
         )
         evaluators[component] = evaluator
         bound_anchors[component] = evaluator.anchors
+    fnf = validate_fnf_systematics(
+        intensity,
+        fnf_systematics,
+        anchor_parameters={
+            component: tuple(anchor.parameter for anchor in anchors)
+            for component, anchors in bound_anchors.items()
+        },
+    )
 
     component_yields = intensity.component_yields(validated_point)
     differential = np.zeros(len(values), dtype=np.float64)
     component_weights: dict[str, np.ndarray] = {}
-    morph_metadata: dict[str, dict[str, float]] = {}
+    morph_metadata: dict[str, dict[str, Any]] = {}
     for component in intensity.component_names:
         component_yield = component_yields[component]
         shape_ratio = np.asarray(
@@ -226,6 +247,23 @@ def _evaluate_asimov_intensity(
                 "shape_partition": evaluation.shape_partition,
                 "yield_factor": evaluation.yield_factor,
             }
+        if component in fnf:
+            evaluation = evaluate_fnf_on_support(
+                fnf[component],
+                values=values,
+                point=validated_point,
+                nominal_shape=shape_ratio,
+                integration_weights=reference_weights,
+            )
+            component_yield *= evaluation.yield_factor
+            shape_ratio = evaluation.shape_ratio
+            morph_metadata.setdefault(component, {}).update(
+                {
+                    "fnf_parameters": list(fnf[component].parameters),
+                    "fnf_shape_partition": evaluation.shape_partition,
+                    "fnf_yield_factor": evaluation.yield_factor,
+                }
+            )
         contribution = component_yield * shape_ratio
         differential += contribution
         component_weights[component] = reference_weights * contribution
@@ -272,6 +310,7 @@ class AsimovBuilder:
             Sequence[RuntimeSystematic | SystematicAnchor],
         ]
         | None = None,
+        fnf_systematics: Mapping[str, Any] | None = None,
     ) -> None:
         self.reference = reference
         self.ratios = dict(ratios)
@@ -282,6 +321,7 @@ class AsimovBuilder:
             component: tuple(anchors)
             for component, anchors in (systematics or {}).items()
         }
+        self.fnf_systematics = dict(fnf_systematics or {})
         if set(self.ratios) != set(self.intensity.component_names):
             raise ValueError(
                 "Ratio evaluators must match the intensity component names."
@@ -331,6 +371,7 @@ class AsimovBuilder:
             reference_weights=reference_weights,
             point=point,
             systematics=self.systematics,
+            fnf_systematics=self.fnf_systematics,
         )
         event_weights = reference_weights * h
         total_weight = float(np.sum(event_weights))
@@ -361,6 +402,11 @@ class AsimovBuilder:
                 "normalization_mode": normalization,
                 "intensity_fingerprint": self.intensity.fingerprint,
                 "systematic_morphs": morph_metadata,
+                "fnf_morphs": {
+                    component: metadata
+                    for component, metadata in morph_metadata.items()
+                    if "fnf_shape_partition" in metadata
+                },
                 "auxiliary_observations": {
                     parameter.name: float(point[parameter.name])
                     for parameter in self.intensity.parameters
@@ -378,6 +424,7 @@ class AsimovBuilder:
             reference_weights=reference_weights,
             component_weights=component_weights,
             systematic_anchors=systematic_anchors,
+            fnf_components=tuple(self.fnf_systematics),
             auxiliary_observations={
                 parameter.name: float(point[parameter.name])
                 for parameter in self.intensity.parameters

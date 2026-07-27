@@ -1,0 +1,197 @@
+schema_version: "2.0"
+features: [x1, x2, x3, x4, x5]
+output_dir: artifacts
+
+frequentist:
+  reference:
+    kind: parquet
+    path: data/reference.parquet
+    weight_column: weight
+    event_id_column: event_id
+
+  samples:
+    - name: signal
+      source:
+        kind: parquet
+        path: data/signal.parquet
+        weight_column: weight
+        event_id_column: event_id
+        split_column: split
+      nominal_yield: 1100.0
+      multiplier: mu
+    - name: background
+      source:
+        kind: parquet
+        path: data/background.parquet
+        weight_column: weight
+        event_id_column: event_id
+        split_column: split
+      nominal_yield: 1000000.0
+      multiplier: "1"
+
+  flow:
+    architecture: quadratic_spline
+    n_coupling_layers: 6
+    hidden_features: 128
+    hidden_layers: 2
+    spline_num_bins: 12
+    spline_tail_bound: 6.0
+    training:
+      epochs: 50
+      batch_size: 1024
+      learning_rate: 0.0003
+      validation_fraction: 0.2
+      early_stopping_patience: 8
+      lr_reduction_factor: 0.5
+      seed: 20260727
+      device: auto
+    onnx_opset: 17
+
+  ratios:
+    backend: native
+    ensemble_size: 3
+    training:
+      epochs: 60
+      batch_size: 1024
+      learning_rate: 0.001
+      hidden_layers: 3
+      neurons: 128
+      activation: swish
+      validation_fraction: 0.15
+      holdout_fraction: 0.20
+      early_stopping_patience: 10
+      lr_reduction_factor: 0.5
+      seed: 20260728
+      device: auto
+    normalization: independent_reference_mean
+    calibration: false
+    onnx_opset: 17
+    diagnostics:
+      overtraining: true
+      calibration: true
+      reweighting: true
+      normalization: true
+
+  parameters:
+    - name: mu
+      role: poi
+      nominal: 1.0
+      bounds: [0.0, 5.0]
+    - name: response
+      role: nuisance
+      nominal: 0.0
+      bounds: [-5.0, 5.0]
+      constraint: {kind: normal, mean: 0.0, sigma: 1.0}
+    - name: resolution
+      role: nuisance
+      nominal: 0.0
+      bounds: [-5.0, 5.0]
+      constraint: {kind: normal, mean: 0.0, sigma: 1.0}
+    - name: theory
+      role: nuisance
+      nominal: 0.0
+      bounds: [-5.0, 5.0]
+      constraint: {kind: normal, mean: 0.0, sigma: 1.0}
+
+  systematics:
+    - name: detector_response
+      parameter: response
+      type: norm_plus_shape
+      interpolation: nsbi_code4p
+      variations:
+        - sample: signal
+          up:
+            {kind: parquet, path: data/signal_response_up.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+          down:
+            {kind: parquet, path: data/signal_response_down.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+        - sample: background
+          up:
+            {kind: parquet, path: data/background_response_up.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+          down:
+            {kind: parquet, path: data/background_response_down.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+    - name: detector_resolution
+      parameter: resolution
+      type: norm_plus_shape
+      interpolation: nsbi_code4p
+      variations:
+        - sample: signal
+          up:
+            {kind: parquet, path: data/signal_resolution_up.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+          down:
+            {kind: parquet, path: data/signal_resolution_down.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+        - sample: background
+          up:
+            {kind: parquet, path: data/background_resolution_up.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+          down:
+            {kind: parquet, path: data/background_resolution_down.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+    - name: signal_theory
+      parameter: theory
+      type: norm_plus_shape
+      interpolation: nsbi_code4p
+      variations:
+        - sample: signal
+          up:
+            {kind: parquet, path: data/signal_theory_up.parquet, weight_column: weight, split_column: split}
+          down:
+            {kind: parquet, path: data/signal_theory_down.parquet, weight_column: weight, split_column: split}
+
+  asimov:
+    parameter_point: {mu: 1.0, response: 0.0, resolution: 0.0, theory: 0.0}
+    n_events: 50000
+    normalization_source:
+      kind: parquet
+      path: data/reference.parquet
+      weight_column: weight
+    output_path: artifacts/asimov.parquet
+
+  nis:
+    design_points:
+      - {mu: 0.0, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 0.5, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 1.0, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 2.0, response: 0.0, resolution: 0.0, theory: 0.0}
+    epsilon: 0.10
+    pilot_events: 50000
+    target_events: 4096
+    flow:
+      architecture: realnvp
+      n_coupling_layers: 6
+      hidden_features: 128
+      hidden_layers: 2
+      scale_clip: 1.5
+      training:
+        epochs: 50
+        batch_size: 1024
+        learning_rate: 0.0005
+        validation_fraction: 0.2
+        early_stopping_patience: 8
+        seed: 20260730
+        device: auto
+      onnx_opset: 17
+    output_path: artifacts/nis
+
+  toys:
+    parameter_points:
+      - {mu: 0.0, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 1.0, response: 0.0, resolution: 0.0, theory: 0.0}
+    toys_per_point: 100
+    method: importance_resampling
+    proposal_events: 100000
+    output_path: artifacts/toys
+
+  workspace:
+    backend: native
+    measurement: signal_strength
+    channel: signal_region
+    output_path: artifacts/workspace.json
+
+  inference:
+    backend: jax_iminuit
+    poi: mu
+    impact_methods: [global_observable, covariance]
+    pyhf_projection:
+      observable: x1
+      bins: 20
+      range: [-5.0, 12.0]
+      scan: [0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0]
+      toys: 2000

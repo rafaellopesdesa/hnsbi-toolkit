@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use hnsbi-toolkit, please cite the software and the accompanying hNDE paper."
 title: "hnsbi-toolkit"
 type: software
-version: 0.1.0
-date-released: 2026-07-26
+version: 0.2.0
+date-released: 2026-07-27
 authors:
   - family-names: "Lopes de Sá"
     given-names: "Rafael Coelho"
