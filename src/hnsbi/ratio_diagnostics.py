@@ -268,6 +268,501 @@ class RatioDiagnosticReport:
         return report_path, manifest
 
 
+@dataclass(frozen=True)
+class RatioValidationReport:
+    """Independent validation of the deployed arithmetic ratio ensemble.
+
+    The target events and reference-flow events represented here are both
+    external to member optimization.  In particular, this report is not a
+    relabeling of any member's internal holdout diagnostic.
+    """
+
+    metrics: Mapping[str, Any]
+    feature_metrics: Mapping[str, Mapping[str, float]]
+    curves: Mapping[str, Any]
+    features: tuple[str, ...]
+    target_count: int
+    reference_count: int
+    figure_paths: tuple[Path, ...] = ()
+
+    def write(self, directory: str | Path) -> tuple[Path, Path]:
+        """Write strict JSON and a checksummed validation manifest."""
+
+        target = Path(directory)
+        target.mkdir(parents=True, exist_ok=True)
+        report_path = target / "ratio_validation.json"
+        report_path.write_text(
+            json.dumps(
+                {
+                    "metrics": json_safe(self.metrics),
+                    "feature_metrics": json_safe(self.feature_metrics),
+                    "curves": json_safe(self.curves),
+                    "features": list(self.features),
+                    "target_count": int(self.target_count),
+                    "reference_count": int(self.reference_count),
+                },
+                allow_nan=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        files: dict[str, Path] = {"report": report_path}
+        files.update(
+            {
+                f"figure-{index:02d}-{path.stem.replace('_', '-')}": path
+                for index, path in enumerate(self.figure_paths)
+            }
+        )
+        manifest_path = target / "ratio_validation.manifest.json"
+        write_artifact_manifest(
+            manifest_path,
+            artifact_type="density-ratio-ensemble-validation",
+            files=files,
+            metadata={
+                "features": list(self.features),
+                "reference_count": int(self.reference_count),
+                "target_count": int(self.target_count),
+                "validation_source": (
+                    "explicit-target-holdout-and-fresh-reference-flow"
+                ),
+            },
+        )
+        return report_path, manifest_path
+
+
+def plot_ratio_validation_calibration(report: RatioValidationReport) -> Any:
+    """Plot score and empirical log-ratio calibration for one validation."""
+
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise ImportError(
+            "Ratio-validation plots require matplotlib; install hnsbi-toolkit[plots]."
+        ) from exc
+
+    score = report.curves["score_calibration"]
+    log_ratio = report.curves["log_ratio_calibration"]
+    figure, axes = plt.subplots(
+        2,
+        2,
+        figsize=(11.5, 6.2),
+        sharex="col",
+        gridspec_kw={"height_ratios": [3, 1]},
+    )
+
+    predicted_score = np.asarray(score["mean_prediction"], dtype=np.float64)
+    observed_score = np.asarray(score["observed_fraction"], dtype=np.float64)
+    axes[0, 0].plot(
+        [0.0, 1.0],
+        [0.0, 1.0],
+        color="black",
+        linestyle="--",
+        label="ideal",
+    )
+    axes[0, 0].plot(
+        predicted_score,
+        observed_score,
+        color="#0072b2",
+        marker="o",
+        label="independent holdout",
+    )
+    axes[0, 0].set(
+        ylabel="observed target fraction",
+        title="Ensemble score calibration",
+    )
+    axes[0, 0].legend()
+    axes[1, 0].axhline(1.0, color="black", linestyle="--")
+    axes[1, 0].plot(
+        predicted_score,
+        np.asarray(score["observed_over_prediction"], dtype=np.float64),
+        color="#0072b2",
+        marker="o",
+    )
+    axes[1, 0].set(
+        xlabel="mean predicted probability",
+        ylabel="obs./pred.",
+    )
+
+    predicted_log_ratio = np.asarray(
+        log_ratio["predicted_log_ratio"],
+        dtype=np.float64,
+    )
+    empirical_log_ratio = np.asarray(
+        log_ratio["empirical_log_ratio"],
+        dtype=np.float64,
+    )
+    finite = np.isfinite(empirical_log_ratio)
+    axes[0, 1].plot(
+        predicted_log_ratio[finite],
+        empirical_log_ratio[finite],
+        color="#d55e00",
+        marker="o",
+        label="independent holdout",
+    )
+    if np.any(finite):
+        low = float(
+            min(
+                np.min(predicted_log_ratio[finite]),
+                np.min(empirical_log_ratio[finite]),
+            )
+        )
+        high = float(
+            max(
+                np.max(predicted_log_ratio[finite]),
+                np.max(empirical_log_ratio[finite]),
+            )
+        )
+        axes[0, 1].plot(
+            [low, high],
+            [low, high],
+            color="black",
+            linestyle="--",
+            label="ideal",
+        )
+    axes[0, 1].set(
+        ylabel="empirical MC log density ratio",
+        title="Ensemble log-ratio calibration",
+    )
+    axes[0, 1].legend()
+    axes[1, 1].axhline(0.0, color="black", linestyle="--")
+    axes[1, 1].plot(
+        predicted_log_ratio[finite],
+        np.asarray(log_ratio["residual"], dtype=np.float64)[finite],
+        color="#d55e00",
+        marker="o",
+    )
+    axes[1, 1].set(
+        xlabel="predicted log density ratio",
+        ylabel="MC $-$ predicted",
+    )
+    figure.tight_layout()
+    return figure
+
+
+def plot_ratio_validation_reweighting(
+    report: RatioValidationReport,
+    feature: str,
+) -> Any:
+    """Plot target closure before and after ensemble-ratio reweighting."""
+
+    if feature not in report.curves["features"]:
+        raise KeyError(f"Unknown validation feature {feature!r}.")
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise ImportError(
+            "Ratio-validation plots require matplotlib; install hnsbi-toolkit[plots]."
+        ) from exc
+
+    payload = report.curves["features"][feature]
+    edges = np.asarray(payload["edges"], dtype=np.float64)
+    target = np.asarray(payload["target"], dtype=np.float64)
+    reference = np.asarray(payload["reference"], dtype=np.float64)
+    reweighted = np.asarray(
+        payload["reweighted_reference"],
+        dtype=np.float64,
+    )
+    figure, (axis, ratio_axis) = plt.subplots(
+        2,
+        1,
+        figsize=(6.4, 6.0),
+        sharex=True,
+        gridspec_kw={"height_ratios": [3, 1], "hspace": 0.05},
+    )
+    axis.stairs(
+        target,
+        edges,
+        color="#d55e00",
+        linewidth=1.8,
+        label="target holdout",
+    )
+    axis.stairs(
+        reference,
+        edges,
+        color="0.45",
+        linewidth=1.8,
+        label="fresh reference flow",
+    )
+    axis.stairs(
+        reweighted,
+        edges,
+        color="#0072b2",
+        linewidth=1.8,
+        label="ensemble ratio $\\times$ reference",
+    )
+    axis.set(
+        ylabel="probability per bin",
+        title=f"Independent ensemble reweighting: {feature}",
+    )
+    axis.legend()
+
+    populated = target > 0
+    reference_ratio = np.divide(
+        reference,
+        target,
+        out=np.full_like(reference, np.nan),
+        where=populated,
+    )
+    reweighted_ratio = np.divide(
+        reweighted,
+        target,
+        out=np.full_like(reweighted, np.nan),
+        where=populated,
+    )
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    ratio_axis.plot(
+        centers[populated],
+        reference_ratio[populated],
+        color="0.45",
+        linestyle="--",
+        drawstyle="steps-mid",
+        label="reference / target",
+    )
+    ratio_axis.plot(
+        centers[populated],
+        reweighted_ratio[populated],
+        color="#0072b2",
+        drawstyle="steps-mid",
+        label="reweighted / target",
+    )
+    ratio_axis.axhline(1.0, color="black", linestyle="--")
+    ratio_axis.set(xlabel=feature, ylabel="ratio")
+    ratio_axis.legend(fontsize=8)
+    figure.align_ylabels((axis, ratio_axis))
+    return figure
+
+
+def diagnose_ratio_validation(
+    *,
+    ensemble: Any,
+    target_values: Any,
+    reference_values: Any,
+    features: Sequence[str],
+    target_weights: Any | None = None,
+    reference_weights: Any | None = None,
+    normalization: float = 1.0,
+    bins: int = 30,
+    output_directory: str | Path | None = None,
+) -> RatioValidationReport:
+    """Validate a deployed arithmetic ensemble on independent event samples.
+
+    ``target_values`` must be a common explicit holdout untouched by every
+    ensemble member. ``reference_values`` must be sampled only after member
+    training. The caller supplies the deployed normalization constant so the
+    validated ratio is exactly the one used by inference.
+    """
+
+    feature_names = tuple(str(feature) for feature in features)
+    if not feature_names or len(set(feature_names)) != len(feature_names):
+        raise ValueError("features must be non-empty and unique.")
+    if int(bins) < 2:
+        raise ValueError("bins must be at least two.")
+    if not np.isfinite(normalization) or normalization <= 0:
+        raise ValueError("normalization must be finite and positive.")
+    target = np.asarray(target_values, dtype=np.float64)
+    reference = np.asarray(reference_values, dtype=np.float64)
+    expected_columns = len(feature_names)
+    if (
+        target.ndim != 2
+        or reference.ndim != 2
+        or target.shape[1] != expected_columns
+        or reference.shape[1] != expected_columns
+    ):
+        raise ValueError(
+            "target_values and reference_values must be two-dimensional "
+            f"with {expected_columns} columns."
+        )
+    if (
+        len(target) == 0
+        or len(reference) == 0
+        or not np.isfinite(target).all()
+        or not np.isfinite(reference).all()
+    ):
+        raise ValueError(
+            "Independent target and reference samples must be non-empty and finite."
+        )
+    target_probability = _weights(
+        (
+            np.ones(len(target), dtype=np.float64)
+            if target_weights is None
+            else target_weights
+        ),
+        len(target),
+        name="target_weights",
+    )
+    reference_probability = _weights(
+        (
+            np.ones(len(reference), dtype=np.float64)
+            if reference_weights is None
+            else reference_weights
+        ),
+        len(reference),
+        name="reference_weights",
+    )
+    target_ratio = _vector(ensemble(target), name="target_ensemble_ratio")
+    reference_ratio = _vector(
+        ensemble(reference),
+        name="reference_ensemble_ratio",
+    )
+    if len(target_ratio) != len(target) or len(reference_ratio) != len(reference):
+        raise ValueError("ensemble must return one ratio per supplied event.")
+    target_ratio = target_ratio / float(normalization)
+    reference_ratio = reference_ratio / float(normalization)
+    if np.any(target_ratio < 0) or np.any(reference_ratio < 0):
+        raise ValueError("ensemble ratios must be non-negative.")
+    if not float(np.sum(reference_probability * reference_ratio)) > 0:
+        raise ValueError("The ensemble ratio has zero measure on reference events.")
+
+    target_score = target_ratio / (1.0 + target_ratio)
+    reference_score = reference_ratio / (1.0 + reference_ratio)
+    score_calibration = _score_calibration(
+        target_score,
+        reference_score,
+        target_probability,
+        reference_probability,
+        bins=int(bins),
+    )
+    log_ratio_calibration = _log_ratio_calibration(
+        target_ratio,
+        reference_ratio,
+        target_probability,
+        reference_probability,
+        bins=int(bins),
+    )
+
+    feature_metrics: dict[str, dict[str, float]] = {}
+    feature_curves: dict[str, dict[str, Any]] = {}
+    reweighted_probability = reference_probability * reference_ratio
+    for index, feature in enumerate(feature_names):
+        target_feature = target[:, index]
+        reference_feature = reference[:, index]
+        edges = _bin_edges(
+            np.concatenate([target_feature, reference_feature]),
+            int(bins),
+        )
+        target_histogram = _normalized_histogram(
+            target_feature,
+            target_probability,
+            edges,
+        )
+        reference_histogram = _normalized_histogram(
+            reference_feature,
+            reference_probability,
+            edges,
+        )
+        reweighted_histogram = _normalized_histogram(
+            reference_feature,
+            reweighted_probability,
+            edges,
+        )
+        raw_ks = weighted_ks(
+            target_feature,
+            reference_feature,
+            left_weights=target_probability,
+            right_weights=reference_probability,
+        )
+        reweighted_ks = weighted_ks(
+            target_feature,
+            reference_feature,
+            left_weights=target_probability,
+            right_weights=reweighted_probability,
+        )
+        feature_metrics[feature] = {
+            "target_reference_weighted_ks": raw_ks,
+            "target_reweighted_reference_weighted_ks": reweighted_ks,
+            "weighted_ks_improvement": raw_ks - reweighted_ks,
+        }
+        feature_curves[feature] = {
+            "edges": edges,
+            "target": target_histogram,
+            "reference": reference_histogram,
+            "reweighted_reference": reweighted_histogram,
+        }
+
+    reference_mean = float(np.sum(reference_probability * reference_ratio))
+    reference_variance = float(
+        np.sum(reference_probability * (reference_ratio - reference_mean) ** 2)
+    )
+    effective_reference_events = float(1.0 / np.sum(reference_probability**2))
+    report = RatioValidationReport(
+        metrics={
+            "classification": {
+                "weighted_auc": weighted_auc(
+                    target_score,
+                    reference_score,
+                    numerator_weights=target_probability,
+                    denominator_weights=reference_probability,
+                )
+            },
+            "calibration": {
+                "brier_score": score_calibration["brier_score"],
+                "expected_calibration_error": score_calibration[
+                    "expected_calibration_error"
+                ],
+                "log_ratio_weighted_rmse": log_ratio_calibration["weighted_rmse"],
+                "log_ratio_occupied_mass": log_ratio_calibration["occupied_mass"],
+            },
+            "normalization": {
+                "reference_mean_ratio": reference_mean,
+                "reference_mean_standard_error": math.sqrt(
+                    max(0.0, reference_variance) / max(effective_reference_events, 1.0)
+                ),
+                "reference_effective_events": effective_reference_events,
+                "deployed_normalization": float(normalization),
+            },
+            "validation": {
+                "reference_count": int(len(reference)),
+                "source": "explicit-target-holdout-and-fresh-reference-flow",
+                "target_count": int(len(target)),
+            },
+        },
+        feature_metrics=feature_metrics,
+        curves={
+            "score_calibration": score_calibration,
+            "log_ratio_calibration": log_ratio_calibration,
+            "features": feature_curves,
+        },
+        features=feature_names,
+        target_count=len(target),
+        reference_count=len(reference),
+    )
+    if output_directory is None:
+        return report
+
+    output = Path(output_directory)
+    output.mkdir(parents=True, exist_ok=True)
+    figure_paths: list[Path] = []
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:  # pragma: no cover - environment dependent
+        plt = None
+    if plt is not None:
+        calibration = plot_ratio_validation_calibration(report)
+        calibration_path = output / "calibration.png"
+        calibration.savefig(calibration_path, bbox_inches="tight")
+        plt.close(calibration)
+        figure_paths.append(calibration_path)
+        for feature in feature_names:
+            figure = plot_ratio_validation_reweighting(report, feature)
+            path = output / f"reweighted_{feature}.png"
+            figure.savefig(path, bbox_inches="tight")
+            plt.close(figure)
+            figure_paths.append(path)
+    complete = RatioValidationReport(
+        metrics=report.metrics,
+        feature_metrics=report.feature_metrics,
+        curves=report.curves,
+        features=report.features,
+        target_count=report.target_count,
+        reference_count=report.reference_count,
+        figure_paths=tuple(figure_paths),
+    )
+    complete.write(output)
+    return complete
+
+
 def diagnose_ratio(
     *,
     numerator_train: np.ndarray,

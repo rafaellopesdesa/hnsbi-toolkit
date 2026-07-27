@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,7 @@ from .config import ToolkitConfig
 from .data import DataSource
 from .intensity import IntensityModel, RatioNormalizer
 from .protocols import RatioEvaluator, Sampler
+from .ratio_diagnostics import RatioValidationReport
 from .toys import ToyGenerator
 
 
@@ -41,6 +42,7 @@ class RatioSetTrainingArtifacts:
     normalization_events: int
     normalizer_path: Path
     normalizer_manifest: Path
+    diagnostics: Mapping[str, RatioValidationReport] = field(default_factory=dict)
 
     @property
     def evaluators(self) -> dict[str, RatioEvaluator]:
@@ -1239,7 +1241,12 @@ class Project:
                 "frequentist ratios require independent_reference_mean."
             )
         training: dict[str, Any] = {}
+        independent_target_holdouts: dict[
+            str,
+            tuple[np.ndarray, np.ndarray],
+        ] = {}
         rng = np.random.default_rng(seed)
+        ratio_config = self.ratio_config()
         sample_specifications = {
             sample["name"]: sample["source"]
             for sample in self._frequentist()["samples"]
@@ -1250,13 +1257,23 @@ class Project:
                 sample_specifications[name],
                 target,
             )
+            if (
+                sample_specifications[name].get("split_column") is not None
+                and target_split is not None
+            ):
+                holdout = np.asarray(target_split).reshape(-1) == "holdout"
+                if np.any(holdout):
+                    independent_target_holdouts[name] = (
+                        np.asarray(target.values[holdout], dtype=np.float32).copy(),
+                        np.asarray(target.weights[holdout], dtype=np.float64).copy(),
+                    )
             count = (
                 len(target.values)
                 if denominator_events is None
                 else int(denominator_events)
             )
             denominator = np.asarray(reference.sample(count, rng=rng), dtype=np.float32)
-            training[name] = RatioTrainer(backend, self.ratio_config()).fit(
+            training[name] = RatioTrainer(backend, ratio_config).fit(
                 target.values,
                 denominator,
                 features=self.config.features,
@@ -1284,12 +1301,38 @@ class Project:
         normalizer_path, normalizer_manifest = normalizer.write(
             self.output_directory / "ratios" / "ratio_normalization.json"
         )
+        diagnostics: dict[str, RatioValidationReport] = {}
+        if ratio_config.run_diagnostics:
+            from .ratio_diagnostics import diagnose_ratio_validation
+
+            for name, (
+                target_values,
+                target_weights,
+            ) in independent_target_holdouts.items():
+                reference_values = np.asarray(
+                    reference.sample(len(target_values), rng=rng),
+                    dtype=np.float32,
+                )
+                diagnostics[name] = diagnose_ratio_validation(
+                    ensemble=training[name].ensemble,
+                    target_values=target_values,
+                    reference_values=reference_values,
+                    target_weights=target_weights,
+                    reference_weights=None,
+                    features=self.config.features,
+                    normalization=normalizer.means[name],
+                    bins=ratio_config.diagnostic_bins,
+                    output_directory=(
+                        self.output_directory / "ratios" / name / "ensemble_validation"
+                    ),
+                )
         return RatioSetTrainingArtifacts(
             training=training,
             normalizer=normalizer,
             normalization_events=len(normalization_values),
             normalizer_path=normalizer_path,
             normalizer_manifest=normalizer_manifest,
+            diagnostics=diagnostics,
         )
 
     def build_configured_asimov(

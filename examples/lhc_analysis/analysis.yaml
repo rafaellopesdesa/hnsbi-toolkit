@@ -147,9 +147,18 @@ frequentist:
   nis:
     design_points:
       - {mu: 0.0, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 0.25, response: 0.0, resolution: 0.0, theory: 0.0}
       - {mu: 0.5, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 0.75, response: 0.0, resolution: 0.0, theory: 0.0}
       - {mu: 1.0, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 1.25, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 1.5, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 1.75, response: 0.0, resolution: 0.0, theory: 0.0}
       - {mu: 2.0, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 2.25, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 2.5, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 2.75, response: 0.0, resolution: 0.0, theory: 0.0}
+      - {mu: 3.0, response: 0.0, resolution: 0.0, theory: 0.0}
     epsilon: 0.10
     pilot_events: 50000
     target_events: 4096
