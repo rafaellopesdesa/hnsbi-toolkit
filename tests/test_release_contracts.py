@@ -181,6 +181,16 @@ def test_frequentist_notebooks_use_only_the_native_lhc_extra() -> None:
         assert "nsbi-common-utils @" not in source
 
 
+def test_frequentist_colab_setup_restarts_after_numpy_abi_change() -> None:
+    for path in FREQUENTIST_NOTEBOOKS:
+        source = _source(_load_notebook(path))
+        assert "loaded_numpy_version" in source
+        assert "installed_numpy_version" in source
+        assert "signal.SIGKILL" in source
+        assert "load a consistent binary stack" in source
+        assert "'pull', '--ff-only', 'origin', 'main'" in source
+
+
 def test_package_has_no_runtime_import_of_the_removed_toolkit() -> None:
     for path in (ROOT / "src").rglob("*.py"):
         source = path.read_text(encoding="utf-8")
