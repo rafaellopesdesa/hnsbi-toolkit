@@ -50,6 +50,12 @@ def test_hybrid_notebook_covers_exercise_five_plot_families() -> None:
         assert required in source
     assert "TOY_PROFILE = 'quick'  # 'quick' or 'paper'" in source
     assert "write_reuse_provenance" in source
+    assert "verify_preselection_manifest" in source
+    assert "ANALYSIS_YIELDS = project.resolved_nominal_yields()" in source
+    assert "SELECTION_EFFICIENCIES" in source
+    assert "EXPECTED_YIELDS" not in source
+    assert "f'{sample}_presel.parquet'" in source
+    assert "'preselection-manifest'" in source
 
 
 def test_nis_notebook_covers_exercise_six_plot_families() -> None:
@@ -65,9 +71,16 @@ def test_nis_notebook_covers_exercise_six_plot_families() -> None:
     ):
         assert required in source
     assert "STUDY_PROFILE = 'quick'  # 'quick' or 'paper'" in source
-    assert "TARGET_ROWS" in source
+    assert "REQUESTED_EVENTS" in source
     assert "Loading verified Exercise-5 nominal artifacts." in source
+    assert "verify_preselection_manifest" in source
     assert "verify_reuse_provenance" in source
+    assert "ANALYSIS_YIELDS = project.resolved_nominal_yields()" in source
+    assert "EXPECTED_YIELDS" not in source
+    assert "f'{sample}_presel.parquet'" in source
+    assert "'preselection-manifest'" in source
+    assert "parquet_rows" not in source
+    assert "observed_rows" not in source
     assert "result.reference_weights" in source
     assert "plot_nis_feature_closure(feature_closure, columns=5)" in source
     assert "len(showcase_scans[method]) < 8" in source

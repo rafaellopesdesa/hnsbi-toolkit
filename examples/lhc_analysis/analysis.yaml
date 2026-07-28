@@ -5,7 +5,7 @@ output_dir: artifacts
 frequentist:
   reference:
     kind: parquet
-    path: data/reference.parquet
+    path: data/reference_presel.parquet
     weight_column: weight
     event_id_column: event_id
 
@@ -13,20 +13,20 @@ frequentist:
     - name: signal
       source:
         kind: parquet
-        path: data/signal.parquet
+        path: data/signal_presel.parquet
         weight_column: weight
         event_id_column: event_id
-        split_column: split
-      nominal_yield: 1100.0
+        split_column: preselection_split
+      nominal_yield: {kind: source_weight_sum}
       multiplier: mu
     - name: background
       source:
         kind: parquet
-        path: data/background.parquet
+        path: data/background_presel.parquet
         weight_column: weight
         event_id_column: event_id
-        split_column: split
-      nominal_yield: 1000000.0
+        split_column: preselection_split
+      nominal_yield: {kind: source_weight_sum}
       multiplier: "1"
 
   flow:
@@ -101,14 +101,14 @@ frequentist:
       variations:
         - sample: signal
           up:
-            {kind: parquet, path: data/signal_response_up.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+            {kind: parquet, path: data/signal_response_up_presel.parquet, weight_column: weight, event_id_column: event_id, split_column: preselection_split}
           down:
-            {kind: parquet, path: data/signal_response_down.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+            {kind: parquet, path: data/signal_response_down_presel.parquet, weight_column: weight, event_id_column: event_id, split_column: preselection_split}
         - sample: background
           up:
-            {kind: parquet, path: data/background_response_up.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+            {kind: parquet, path: data/background_response_up_presel.parquet, weight_column: weight, event_id_column: event_id, split_column: preselection_split}
           down:
-            {kind: parquet, path: data/background_response_down.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+            {kind: parquet, path: data/background_response_down_presel.parquet, weight_column: weight, event_id_column: event_id, split_column: preselection_split}
     - name: detector_resolution
       parameter: resolution
       type: norm_plus_shape
@@ -116,14 +116,14 @@ frequentist:
       variations:
         - sample: signal
           up:
-            {kind: parquet, path: data/signal_resolution_up.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+            {kind: parquet, path: data/signal_resolution_up_presel.parquet, weight_column: weight, event_id_column: event_id, split_column: preselection_split}
           down:
-            {kind: parquet, path: data/signal_resolution_down.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+            {kind: parquet, path: data/signal_resolution_down_presel.parquet, weight_column: weight, event_id_column: event_id, split_column: preselection_split}
         - sample: background
           up:
-            {kind: parquet, path: data/background_resolution_up.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+            {kind: parquet, path: data/background_resolution_up_presel.parquet, weight_column: weight, event_id_column: event_id, split_column: preselection_split}
           down:
-            {kind: parquet, path: data/background_resolution_down.parquet, weight_column: weight, event_id_column: event_id, split_column: split}
+            {kind: parquet, path: data/background_resolution_down_presel.parquet, weight_column: weight, event_id_column: event_id, split_column: preselection_split}
     - name: signal_theory
       parameter: theory
       type: norm_plus_shape
@@ -131,16 +131,16 @@ frequentist:
       variations:
         - sample: signal
           up:
-            {kind: parquet, path: data/signal_theory_up.parquet, weight_column: weight, split_column: split}
+            {kind: parquet, path: data/signal_theory_up_presel.parquet, weight_column: weight, split_column: preselection_split}
           down:
-            {kind: parquet, path: data/signal_theory_down.parquet, weight_column: weight, split_column: split}
+            {kind: parquet, path: data/signal_theory_down_presel.parquet, weight_column: weight, split_column: preselection_split}
 
   asimov:
     parameter_point: {mu: 1.0, response: 0.0, resolution: 0.0, theory: 0.0}
     n_events: 50000
     normalization_source:
       kind: parquet
-      path: data/reference.parquet
+      path: data/reference_presel.parquet
       weight_column: weight
     output_path: artifacts/asimov.parquet
 

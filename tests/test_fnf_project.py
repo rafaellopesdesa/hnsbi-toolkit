@@ -183,6 +183,29 @@ def test_yaml_fnf_configuration_materializes_grouped_anchors(tmp_path) -> None:
     np.testing.assert_array_equal(anchors[0].groups, np.arange(12))
 
 
+def test_fnf_yield_morph_uses_resolved_source_weight_sum() -> None:
+    config = _config()
+    config["frequentist"]["samples"][0]["nominal_yield"] = {
+        "kind": "source_weight_sum"
+    }
+    signal = pa.table(
+        {
+            "x": pa.array([0.0, 1.0, 2.0], type=pa.float32()),
+            "weight": pa.array([0.5, 1.5, 2.5], type=pa.float64()),
+        }
+    )
+    project = Project.load(config, registry={"signal": signal})
+    residual_config, _ = project.fnf_configs("signal_shape")
+    morph = project._fnf_yield_morph(  # noqa: SLF001 - focused integration contract
+        project.fnf_model_specifications()[0],
+        residual_config,
+    )
+
+    assert morph is not None
+    assert morph.nominal_yield == pytest.approx(4.5)
+    assert morph.expected_yield({"shift": 0.5}) == pytest.approx(4.5 * 1.1)
+
+
 def test_yaml_fnf_rejects_uncovered_interaction() -> None:
     config = _config()
     model = config["frequentist"]["fnf"]["models"][0]

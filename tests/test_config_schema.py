@@ -76,6 +76,49 @@ def test_schema_requires_a_workflow() -> None:
         ToolkitConfig.load(value)
 
 
+def test_schema_accepts_source_weight_sum_nominal_yield() -> None:
+    value = _example("frequentist_complete.json")
+    value["frequentist"]["samples"][0]["nominal_yield"] = {
+        "kind": "source_weight_sum"
+    }
+    assert not _schema_errors(value)
+    loaded = ToolkitConfig.load(value)
+    assert loaded.frequentist["samples"][0]["nominal_yield"] == {
+        "kind": "source_weight_sum"
+    }
+
+
+@pytest.mark.parametrize(
+    "nominal_yield",
+    [
+        {"kind": "weights"},
+        {"kind": "source_weight_sum", "column": "weight"},
+        {},
+        "source_weight_sum",
+        True,
+        -1.0,
+    ],
+)
+def test_schema_rejects_invalid_source_weight_sum_nominal_yield(
+    nominal_yield,
+) -> None:
+    value = _example("frequentist_complete.json")
+    value["frequentist"]["samples"][0]["nominal_yield"] = nominal_yield
+    assert _schema_errors(value)
+    with pytest.raises(ConfigError, match="nominal_yield"):
+        ToolkitConfig.load(value, validate_schema=False)
+
+
+@pytest.mark.parametrize("nominal_yield", [float("nan"), float("inf")])
+def test_manual_validation_rejects_non_finite_nominal_yield(
+    nominal_yield,
+) -> None:
+    value = _example("frequentist_complete.json")
+    value["frequentist"]["samples"][0]["nominal_yield"] = nominal_yield
+    with pytest.raises(ConfigError, match="nominal_yield"):
+        ToolkitConfig.load(value, validate_schema=False)
+
+
 def test_schema_rejects_invalid_nis_epsilon() -> None:
     value = _example("frequentist_complete.json")
     value["frequentist"]["nis"]["epsilon"] = 0.0

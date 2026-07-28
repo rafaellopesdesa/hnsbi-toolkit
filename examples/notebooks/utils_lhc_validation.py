@@ -200,6 +200,27 @@ def mixture_log_density(
     return np.asarray(logsumexp(np.vstack(terms), axis=0), dtype=np.float64)
 
 
+def conditional_log_density(
+    log_density: np.ndarray,
+    *,
+    selection_efficiency: float,
+) -> np.ndarray:
+    """Normalize a density on already-selected support.
+
+    For values satisfying the fixed selection, this returns
+    ``log p(x | pass) = log p(x) - log P(pass)``.  Callers remain responsible
+    for ensuring the supplied values pass the selection.
+    """
+
+    values = np.asarray(log_density, dtype=np.float64)
+    efficiency = float(selection_efficiency)
+    if not np.isfinite(values).all():
+        raise ValueError("log_density must be finite.")
+    if not np.isfinite(efficiency) or not 0.0 < efficiency <= 1.0:
+        raise ValueError("selection_efficiency must lie in (0, 1].")
+    return values - np.log(efficiency)
+
+
 def reference_log_density(
     component_log_densities: Mapping[str, np.ndarray],
     *,

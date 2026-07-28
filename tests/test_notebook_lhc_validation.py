@@ -114,6 +114,20 @@ def test_truth_density_and_binned_calibration_close_exactly() -> None:
     assert len(edges) == 11
 
 
+def test_conditional_density_uses_manifest_selection_efficiency() -> None:
+    inclusive = np.asarray([-3.0, -2.0, -1.0])
+    selected = VALIDATION.conditional_log_density(
+        inclusive,
+        selection_efficiency=0.25,
+    )
+    np.testing.assert_allclose(selected, inclusive - np.log(0.25))
+    with pytest.raises(ValueError, match="selection_efficiency"):
+        VALIDATION.conditional_log_density(
+            inclusive,
+            selection_efficiency=0.0,
+        )
+
+
 def test_extended_and_asimov_mu_scans_minimize_at_truth() -> None:
     rng = np.random.default_rng(4)
     rows = 2000

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -105,6 +106,7 @@ class Project:
         self.config = config
         self.base_directory = Path(base_directory)
         self.registry = dict(registry or {})
+        self._resolved_nominal_yields_cache: dict[str, float] | None = None
 
     @classmethod
     def load(
@@ -391,8 +393,7 @@ class Project:
             return None
         from .fnf import LogQuadraticYieldMorph
 
-        samples = {sample["name"]: sample for sample in self._frequentist()["samples"]}
-        nominal_yield = float(samples[model["sample"]]["nominal_yield"])
+        nominal_yield = self.resolved_nominal_yields()[model["sample"]]
         absolute = {
             nuisance: tuple(nominal_yield * float(factor) for factor in factors)
             for nuisance, factors in anchors.items()
@@ -1004,8 +1005,53 @@ class Project:
             metadata=metadata,
         )
 
+    def resolved_nominal_yields(self) -> dict[str, float]:
+        """Return numeric component yields, resolving source-weight sentinels once.
+
+        A numeric ``nominal_yield`` remains independent of its event source.
+        ``{"kind": "source_weight_sum"}`` instead streams the configured source
+        and sums its event weights. The result is cached for the lifetime of
+        this project so repeated likelihood, Asimov, toy, and FNF construction
+        cannot observe different yields if a mutable registry object changes.
+        """
+
+        if self._resolved_nominal_yields_cache is not None:
+            return dict(self._resolved_nominal_yields_cache)
+
+        resolved: dict[str, float] = {}
+        for sample in self._frequentist()["samples"]:
+            name = sample["name"]
+            specification = sample["nominal_yield"]
+            if isinstance(specification, Mapping):
+                if dict(specification) != {"kind": "source_weight_sum"}:
+                    raise ValueError(
+                        f"Unsupported nominal-yield source for sample {name!r}."
+                    )
+                source = self.data_source(sample["source"])
+                total = float(
+                    sum(
+                        np.sum(batch.weights, dtype=np.float64)
+                        for batch in source.iter_batches()
+                    )
+                )
+                if not np.isfinite(total) or total < 0.0:
+                    raise ValueError(
+                        f"Source-weight nominal yield for sample {name!r} "
+                        "must be finite and non-negative."
+                    )
+                resolved[name] = total
+            else:
+                resolved[name] = float(specification)
+
+        self._resolved_nominal_yields_cache = resolved
+        return dict(resolved)
+
     def intensity_model(self) -> IntensityModel:
-        return IntensityModel.from_config(self._frequentist())
+        section = deepcopy(self._frequentist())
+        yields = self.resolved_nominal_yields()
+        for sample in section["samples"]:
+            sample["nominal_yield"] = yields[sample["name"]]
+        return IntensityModel.from_config(section)
 
     def _translate_flow(self, flow: Mapping[str, Any]) -> tuple[Any, Any]:
         from .flows import FlowConfig, FlowTrainingConfig

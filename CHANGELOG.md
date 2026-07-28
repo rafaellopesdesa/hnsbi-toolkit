@@ -5,6 +5,19 @@ artifact formats have their own explicit schema versions.
 
 ## Unreleased
 
+### Added
+
+- Generation-time, legacy-equivalent LHC preselection with raw and selected
+  Parquet bundles, fixed-cut provenance, and an exactly balanced conditional
+  reference sample.
+- Source-weight-derived nominal yields through
+  `nominal_yield: {kind: source_weight_sum}`.
+
+### Changed
+
+- The hybrid reference-flow and neural-importance-sampling notebooks consume
+  only the prepared selected samples and use conditional analytical truth.
+
 ## 0.2.0 - 2026-07-27
 
 ### Added

@@ -590,8 +590,26 @@
           "$ref": "#/$defs/dataSource"
         },
         "nominal_yield": {
-          "type": "number",
-          "minimum": 0.0
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0.0
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "source_weight_sum"
+                }
+              },
+              "additionalProperties": false,
+              "minProperties": 1,
+              "maxProperties": 1
+            }
+          ]
         },
         "multiplier": {
           "type": "string",

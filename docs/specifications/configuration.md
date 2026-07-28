@@ -57,6 +57,12 @@ theory variations and the pyhf projection used for CLs limits.
 `frequentist.fnf.models` provides the YAML alternative for sample-specific,
 multi-nuisance normalized morphs; see {doc}`../frequentist/fnf`.
 
+Each sample's `nominal_yield` may be a fixed nonnegative number or
+`{kind: source_weight_sum}`. The latter streams the configured source,
+sums its event weights (or unit weights when no weight column is declared),
+and caches the result for the lifetime of the `Project`. It is useful for
+materialized selections whose acceptance is already encoded in the table.
+
 ## Bayesian input contract
 
 The YAML supplies `theta_features`, the data drawn under the $\rho$, $\nu$,

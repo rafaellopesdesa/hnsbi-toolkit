@@ -21,6 +21,23 @@ The frequentist setup cells install `hnsbi-toolkit[lhc,flows]` and use its
 self-contained native ratio, workspace, and inference stack. They do not
 clone or import another NSBI package.
 
+The frequentist generator retains raw parquets and creates `_presel.parquet`
+inputs before either notebook begins its method-specific work. It preserves
+the legacy disjoint 50% / 46% / 4% selector, downstream-training, and
+evaluation partition; derives one nominal $p_S/p_B$ cut; applies that fixed
+cut to every variation; and constructs an equal signal/background reference
+after selection. Selected weight sums are the corresponding post-selection
+expected yields.
+
+The historical learned PRESEL checkpoint is unavailable, so the controlled
+Gaussian-mixture example uses its known reconstructed densities as a
+deterministic, legacy-equivalent analytic selector. It does not claim to
+reproduce that learned network. A `preselection.manifest.json` binds the
+selector, cut, requested counts, yields, and checksums of all raw and selected
+files; the setup reuses persistent inputs only after this manifest verifies.
+The notebooks therefore remain focused on hNSBI rather than repeating the
+preselection exercise.
+
 Each checked-in notebook displays a Google Colab badge pointing to its actual
 repository path. The setup cell installs the toolkit and preserved helper
 dependencies. With `USE_DRIVE = True`, source checkouts and generated

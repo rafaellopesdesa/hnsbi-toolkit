@@ -215,6 +215,25 @@ def _manual_validate(value: Mapping[str, Any]) -> None:
             name = sample.get("name")
             if not isinstance(name, str) or not name:
                 raise ConfigError("Every frequentist sample needs a name.")
+            nominal_yield = sample.get("nominal_yield")
+            if isinstance(nominal_yield, Mapping):
+                if dict(nominal_yield) != {"kind": "source_weight_sum"}:
+                    raise ConfigError(
+                        f"Frequentist sample {name!r} nominal_yield must be a "
+                        "non-negative number or exactly "
+                        "{'kind': 'source_weight_sum'}."
+                    )
+            elif (
+                isinstance(nominal_yield, bool)
+                or not isinstance(nominal_yield, numbers.Real)
+                or not math.isfinite(float(nominal_yield))
+                or float(nominal_yield) < 0.0
+            ):
+                raise ConfigError(
+                    f"Frequentist sample {name!r} nominal_yield must be a "
+                    "non-negative number or exactly "
+                    "{'kind': 'source_weight_sum'}."
+                )
             names.append(name)
         if len(names) != len(samples):
             raise ConfigError("Every frequentist sample needs a name.")
@@ -703,7 +722,11 @@ def _manual_validate(value: Mapping[str, Any]) -> None:
         try:
             from .intensity import IntensityModel
 
-            IntensityModel.from_config(frequentist)
+            intensity_config = deepcopy(frequentist)
+            for sample in intensity_config["samples"]:
+                if isinstance(sample["nominal_yield"], Mapping):
+                    sample["nominal_yield"] = 1.0
+            IntensityModel.from_config(intensity_config)
         except (KeyError, TypeError, ValueError) as exc:
             raise ConfigError(f"Invalid frequentist intensity model: {exc}") from exc
     bayesian = value.get("bayesian")

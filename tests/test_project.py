@@ -102,6 +102,49 @@ def test_project_builds_intensity_and_registry_sources() -> None:
     assert set(project.sample_sources()) == {"signal", "background"}
 
 
+def test_project_resolves_and_caches_source_weight_nominal_yield() -> None:
+    pd = pytest.importorskip("pandas")
+    config = _config()
+    signal = pd.DataFrame(
+        {
+            "x": [0.0, 1.0, 2.0],
+            "y": [1.0, 2.0, 3.0],
+            "weight": [0.5, 1.5, 2.5],
+        }
+    )
+    config["frequentist"]["samples"][0]["source"]["weight_column"] = "weight"
+    config["frequentist"]["samples"][0]["nominal_yield"] = {
+        "kind": "source_weight_sum"
+    }
+    project = Project.load(config, registry={"signal": signal})
+
+    assert project.resolved_nominal_yields() == {
+        "signal": pytest.approx(4.5),
+        "background": pytest.approx(20.0),
+    }
+    assert project.intensity_model().expected_yield({"mu": 2.0}) == pytest.approx(
+        29.0
+    )
+    assert project.config.frequentist["samples"][0]["nominal_yield"] == {
+        "kind": "source_weight_sum"
+    }
+
+    signal.loc[:, "weight"] = 100.0
+    assert project.resolved_nominal_yields()["signal"] == pytest.approx(4.5)
+    assert project.intensity_model().expected_yield({"mu": 2.0}) == pytest.approx(
+        29.0
+    )
+
+
+def test_numeric_nominal_yields_do_not_resolve_data_sources() -> None:
+    project = Project.load(_config())
+    assert project.resolved_nominal_yields() == {
+        "signal": 8.0,
+        "background": 20.0,
+    }
+    assert project.intensity_model().expected_yield({"mu": 2.0}) == 36.0
+
+
 def test_project_translates_flow_and_ratio_configs() -> None:
     values = np.ones((3, 2), dtype=np.float32)
     project = Project.load(

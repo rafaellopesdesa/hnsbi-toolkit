@@ -18,6 +18,29 @@ use the compact configurations in
 | [`sbibm_slcp_benchmark.ipynb`](sbibm_slcp_benchmark.ipynb) | `Exercise_10_SBIBM_Hybrid_Benchmark.ipynb` | `sbibm` SLCP benchmark |
 | [`sbibm_two_moons_benchmark.ipynb`](sbibm_two_moons_benchmark.ipynb) | `Exercise_10_SBIBM_Hybrid_Benchmark_TwoMoons.ipynb` | `sbibm` Two Moons benchmark |
 
+## Prepared frequentist inputs
+
+The two frequentist notebooks intentionally start from generation-time
+preselection so their cells can focus on the hNSBI reference-flow,
+density-ratio, workspace, and neural-importance-sampling methods. Generation
+keeps the raw parquets and writes `_presel.parquet` analysis copies. One cut
+derived from nominal signal/background is applied unchanged to every
+systematic variation, and the selected reference is balanced 50:50 between
+signal and background only after selection.
+
+The historical learned PRESEL checkpoint is not available. For these
+controlled Gaussian mixtures, the generator uses their known reconstructed
+densities as a deterministic, legacy-equivalent analytic ratio selector. It
+also preserves the historical disjoint 50% / 46% / 4% row partition and
+stores selected files whose weight sums are the post-selection expected
+yields.
+
+The adjacent `preselection.manifest.json` records the selector fingerprint,
+fixed cut, partition configuration, requested counts, yield diagnostics, and
+checksums for every raw and selected file. Persistent data are reused only
+after the manifest verifies, preventing a notebook from silently combining
+stale raw samples, selected samples, or reference artifacts.
+
 ## Self-contained runtime
 
 The frequentist notebooks install only `hnsbi-toolkit[lhc,flows]`. They do not
@@ -44,5 +67,5 @@ Drive workspace:
 `MyDrive/hsbi-toolkit/paper-examples`
 
 The paper profiles are intentionally computationally expensive. After the
-first run, artifacts in that workspace are reused when the corresponding
-`LOAD_IF_AVAILABLE` setting is enabled.
+first run, verified generated inputs and learned artifacts in that workspace
+are reused when their corresponding reuse setting is enabled.
